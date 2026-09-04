@@ -11,6 +11,7 @@ import com.aicode.feature.agent.domain.model.AgentImage
 import com.aicode.feature.agent.domain.model.AgentMessage
 import com.aicode.feature.agent.domain.tool.AgentTool
 import com.aicode.feature.agent.domain.tool.ToolCall
+import com.aicode.feature.agent.domain.tool.modelToolResultText
 import com.google.gson.JsonParser
 import javax.inject.Inject
 import kotlin.coroutines.coroutineContext
@@ -544,17 +545,21 @@ class OpenAIAdapter @Inject constructor(
                     )
                 }
                 is AgentMessage.ToolResultMessage -> {
+                    // 文件类工具喂模型用精简投影文本（减少完整 diff 回传的 token），UI/持久化仍走完整 result。
+                    val modelText = message.modelResult
+                        ?: modelToolResultText(message.toolName, message.result)
+                        ?: message.result
                     val content: Any = if (message.images.isNotEmpty()) {
                         val parts = mutableListOf<Map<String, Any>>()
-                        if (message.result.isNotBlank()) {
-                            parts.add(mapOf("type" to "text", "text" to message.result))
+                        if (modelText.isNotBlank()) {
+                            parts.add(mapOf("type" to "text", "text" to modelText))
                         }
                         message.images.forEach { image ->
                             parts.add(image.toOpenAIImagePart())
                         }
                         parts
                     } else {
-                        message.result
+                        modelText
                     }
                     OpenAIChatMessage(
                         role = "tool",

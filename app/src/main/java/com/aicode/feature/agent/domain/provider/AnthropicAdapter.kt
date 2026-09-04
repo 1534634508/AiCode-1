@@ -12,6 +12,7 @@ import com.aicode.feature.agent.domain.model.AgentImage
 import com.aicode.feature.agent.domain.model.AgentMessage
 import com.aicode.feature.agent.domain.tool.AgentTool
 import com.aicode.feature.agent.domain.tool.ToolCall
+import com.aicode.feature.agent.domain.tool.modelToolResultText
 import com.aicode.feature.settings.domain.model.ProviderType
 import com.aicode.feature.settings.domain.model.defaultProviderApiPath
 import com.google.gson.JsonParser
@@ -480,17 +481,21 @@ class AnthropicAdapter @Inject constructor(
                 is AgentMessage.ToolResultMessage -> {
                     // 防御性清理：跳过没有配对 tool_use 的孤立 tool_result
                     if (!lastAssistantHadToolUse) continue
+                    // 文件类工具喂模型用精简投影文本（减少完整 diff 回传的 token），UI/持久化仍走完整 result。
+                    val modelText = message.modelResult
+                        ?: modelToolResultText(message.toolName, message.result)
+                        ?: message.result
                     val content: Any = if (message.images.isNotEmpty()) {
                         val contentList = mutableListOf<AnthropicContentBlock>()
-                        if (message.result.isNotBlank()) {
-                            contentList.add(AnthropicContentBlock(type = "text", text = message.result))
+                        if (modelText.isNotBlank()) {
+                            contentList.add(AnthropicContentBlock(type = "text", text = modelText))
                         }
                         message.images.forEach { img ->
                             contentList.add(img.toAnthropicImageBlock())
                         }
                         contentList
                     } else {
-                        message.result
+                        modelText
                     }
                     val resultBlock = AnthropicContentBlock(
                         type = "tool_result",

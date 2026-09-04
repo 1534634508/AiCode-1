@@ -28,6 +28,7 @@ import com.aicode.feature.agent.domain.tool.ToolRegistry
 import com.aicode.feature.agent.domain.tool.ToolResult
 import com.aicode.feature.agent.domain.tool.ToolOutputStore
 import com.aicode.feature.agent.domain.tool.ToolStreamEvent
+import com.aicode.feature.agent.domain.tool.modelToolResultText
 import com.aicode.feature.agent.domain.tool.toTransportString
 import com.aicode.feature.agent.presentation.AgentAttachment
 import com.aicode.feature.settings.data.remote.ModelMetadataService
@@ -397,7 +398,8 @@ class StatefulAgentWorkflow @Inject constructor(
                             id = batchResult.id,
                             toolName = batchResult.toolName,
                             result = batchResult.result,
-                            images = batchResult.images
+                            images = batchResult.images,
+                            modelResult = modelToolResultText(batchResult.toolName, batchResult.result)
                         )
                     )
                 }

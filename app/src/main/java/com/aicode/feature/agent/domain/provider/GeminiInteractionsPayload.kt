@@ -6,6 +6,7 @@ import com.aicode.feature.agent.domain.model.AgentImage
 import com.aicode.feature.agent.domain.model.AgentMessage
 import com.aicode.feature.agent.domain.tool.AgentTool
 import com.aicode.feature.agent.domain.tool.ToolCall
+import com.aicode.feature.agent.domain.tool.modelToolResultText
 import com.google.gson.JsonArray
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
@@ -128,10 +129,14 @@ private fun AgentMessage.UserMessage.toInteractionContent(): List<Map<String, An
 
 /** 工具结果：Interactions 允许 `result` 里夹图片 content，故截图类工具结果能原样带回。 */
 private fun AgentMessage.ToolResultMessage.toInteractionResult(): List<Map<String, Any>> {
+    // 文件类工具喂模型用精简投影文本，UI/持久化仍走完整 result。
+    val modelText = modelResult
+        ?: modelToolResultText(toolName, result)
+        ?: result
     val blocks = mutableListOf<Map<String, Any>>()
-    if (result.isNotBlank()) blocks.add(textContent(result))
+    if (modelText.isNotBlank()) blocks.add(textContent(modelText))
     images.forEach { blocks.add(it.toImageContent()) }
-    return blocks.ifEmpty { listOf(textContent(result)) }
+    return blocks.ifEmpty { listOf(textContent(modelText)) }
 }
 
 /**

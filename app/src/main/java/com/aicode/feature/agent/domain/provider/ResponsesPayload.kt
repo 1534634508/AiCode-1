@@ -6,6 +6,7 @@ import com.aicode.feature.agent.data.remote.openai.ResponsesToolDefinition
 import com.aicode.feature.agent.domain.model.AgentImage
 import com.aicode.feature.agent.domain.model.AgentMessage
 import com.aicode.feature.agent.domain.tool.AgentTool
+import com.aicode.feature.agent.domain.tool.modelToolResultText
 import com.google.gson.JsonParser
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -189,10 +190,14 @@ private fun AgentMessage.UserMessage.toResponsesContent(): Any {
 
 /** 工具结果：纯文本直接给字符串，带图时用 part 列表（Responses 允许 function_call_output 内含图片）。 */
 private fun AgentMessage.ToolResultMessage.toResponsesOutput(): Any {
-    if (images.isEmpty()) return result
+    // 文件类工具喂模型用精简投影文本，UI/持久化仍走完整 result。
+    val modelText = modelResult
+        ?: modelToolResultText(toolName, result)
+        ?: result
+    if (images.isEmpty()) return modelText
     val parts = mutableListOf<Map<String, Any>>()
-    if (result.isNotBlank()) {
-        parts.add(mapOf("type" to ResponsesPart.INPUT_TEXT, "text" to result))
+    if (modelText.isNotBlank()) {
+        parts.add(mapOf("type" to ResponsesPart.INPUT_TEXT, "text" to modelText))
     }
     images.forEach { parts.add(it.toResponsesImagePart()) }
     return parts

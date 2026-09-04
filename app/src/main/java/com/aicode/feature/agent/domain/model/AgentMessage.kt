@@ -31,7 +31,9 @@ sealed class AgentMessage {
         val id: String = "",
         val toolName: String,
         val result: String,
-        val images: List<AgentImage> = emptyList()
+        val images: List<AgentImage> = emptyList(),
+        /** 仅喂模型的精简结果文本；null 时回退用 [result]。UI 与持久化仍用 result。 */
+        val modelResult: String? = null
     ) : AgentMessage()
 }
 

@@ -6,6 +6,7 @@ import com.aicode.feature.agent.domain.model.AgentImage
 import com.aicode.feature.agent.domain.model.AgentMessage
 import com.aicode.feature.agent.domain.tool.AgentTool
 import com.aicode.feature.agent.domain.tool.ToolCall
+import com.aicode.feature.agent.domain.tool.modelToolResultText
 import com.google.gson.JsonParser
 import com.google.gson.JsonObject
 import javax.inject.Inject
@@ -631,11 +632,15 @@ class GeminiAdapter @Inject constructor(
                     // 防御性清理：跳过没有配对 functionCall 的孤立 functionResponse
                     if (!lastModelHadFunctionCall) continue
                     val parts = mutableListOf<Map<String, Any>>()
+                    // 文件类工具喂模型用精简投影文本，UI/持久化仍走完整 result。
+                    val modelText = message.modelResult
+                        ?: modelToolResultText(message.toolName, message.result)
+                        ?: message.result
                     // name 发函数名，并行调用时额外带 id 回去配对（旧数据的 id 就是函数名，此时不发 id）。
                     val functionName = message.toolName.ifBlank { message.id }
                     val functionResponse = mutableMapOf<String, Any>(
                         "name" to functionName,
-                        "response" to mapOf("result" to message.result)
+                        "response" to mapOf("result" to modelText)
                     )
                     if (message.id.isNotBlank() && message.id != functionName) {
                         functionResponse["id"] = message.id
