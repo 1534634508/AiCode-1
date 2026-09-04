@@ -82,4 +82,40 @@ interface AgentMessageDao {
     /** 按会话分页读取（keyset），供单会话备份流式导出。 */
     @Query("SELECT * FROM agent_messages WHERE sessionId = :sessionId AND (timestamp > :lastTimestamp OR (timestamp = :lastTimestamp AND id > :lastId)) ORDER BY timestamp ASC, id ASC LIMIT :limit")
     suspend fun getPageBySessionAfter(sessionId: String, lastTimestamp: Long, lastId: String, limit: Int): List<AgentMessageEntity>
+
+    /**
+     * 各会话消息正文占用的字节数（降序取前 [limit] 个），供存储空间页拆解「聊天记录」构成。
+     *
+     * `LENGTH(CAST(x AS BLOB))` 取的是 UTF-8 字节数——直接 `LENGTH(x)` 对文本返回字符数，中文会少算三分之二。
+     * 只统计几个大字段，因此是估算值：不含索引、页对齐与 WAL 开销，必然小于数据库文件本身。
+     */
+    @Query(
+        """
+        SELECT m.sessionId AS sessionId,
+               s.title AS title,
+               COUNT(*) AS messageCount,
+               SUM(
+                   LENGTH(CAST(m.content AS BLOB))
+                   + LENGTH(CAST(IFNULL(m.toolCallsJson, '') AS BLOB))
+                   + LENGTH(CAST(IFNULL(m.toolArgs, '') AS BLOB))
+                   + LENGTH(CAST(IFNULL(m.reasoning, '') AS BLOB))
+                   + LENGTH(CAST(IFNULL(m.thinkingBlocksJson, '') AS BLOB))
+                   + LENGTH(CAST(IFNULL(m.attachmentsJson, '') AS BLOB))
+               ) AS bytes
+        FROM agent_messages m
+        LEFT JOIN chat_sessions s ON s.id = m.sessionId
+        GROUP BY m.sessionId
+        ORDER BY bytes DESC
+        LIMIT :limit
+        """
+    )
+    suspend fun sessionStorageUsage(limit: Int): List<SessionStorageUsage>
 }
+
+/** 单个会话的消息占用估算（[AgentMessageDao.sessionStorageUsage] 的投影）。 */
+data class SessionStorageUsage(
+    val sessionId: String,
+    val title: String?,
+    val messageCount: Int,
+    val bytes: Long
+)

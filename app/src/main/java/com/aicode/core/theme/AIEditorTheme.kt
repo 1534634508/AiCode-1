@@ -176,6 +176,20 @@ object TokenStatsPalette {
     val Progress = Color(0xFF22C55E)
 }
 
+/** 存储空间页各占用分类的色标（堆叠条与行前色点共用）。 */
+object StorageUsagePalette {
+    val Chat = Color(0xFF3B82F6)
+    val Container = Color(0xFF8B5CF6)
+    val ContainerImages = Color(0xFFA78BFA)
+    val Workspaces = Color(0xFF22C55E)
+    val AiConfig = Color(0xFF14B8A6)
+    val Checkpoints = Color(0xFFF59E0B)
+    val Logs = Color(0xFFF97316)
+    val Caches = Color(0xFF94A3B8)
+    val OtherData = Color(0xFFCBD5E1)
+    val Apk = Color(0xFF64748B)
+}
+
 internal val DarkColorScheme = darkColorScheme(
     primary = Color(0xFF60A5FA),
     onPrimary = Color(0xFF082F49),

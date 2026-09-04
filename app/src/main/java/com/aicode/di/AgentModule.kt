@@ -97,7 +97,7 @@ object AgentModule {
         return Room.databaseBuilder(
             context,
             AgentDatabase::class.java,
-            "aicode_agent_db"
+            AgentDatabase.DATABASE_NAME
         ).addMigrations(*MigrationLoader.loadMigrations(context))
             .fallbackToDestructiveMigration(dropAllTables = false)
             .build()

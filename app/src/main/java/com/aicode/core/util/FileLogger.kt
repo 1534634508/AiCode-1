@@ -126,6 +126,33 @@ object FileLogger {
             ?: emptyList()
     }
 
+    /**
+     * 删除全部日志文件，返回释放的字节数。
+     *
+     * 删除动作必须排到 [ioExecutor] 上：当天的文件正被 [writer] 持有句柄，不先关闭并清掉日期标记，
+     * 后续写入会继续落进已删除的 inode，日志静默丢失直到跨天换文件。
+     */
+    fun clearLogs(): Long {
+        val dir = logDir ?: return 0L
+        val freed = java.util.concurrent.atomic.AtomicLong(0)
+        val latch = java.util.concurrent.CountDownLatch(1)
+        ioExecutor.execute {
+            runCatching {
+                writer?.close()
+                writer = null
+                writerDate = null
+                pendingChars = 0
+                dir.listFiles { f -> f.isFile && f.name.startsWith("log-") }?.forEach { file ->
+                    val size = file.length()
+                    if (file.delete()) freed.addAndGet(size)
+                }
+            }.onFailure { Log.e(TAG, "清空日志失败", it) }
+            latch.countDown()
+        }
+        runCatching { latch.await(5, java.util.concurrent.TimeUnit.SECONDS) }
+        return freed.get()
+    }
+
     private fun write(level: String, tag: String, message: String, throwable: Throwable?) {
         val dir = logDir ?: return // 未初始化则只走 logcat，不落盘
         val now = java.time.Instant.now()

@@ -108,6 +108,38 @@ object AILogger {
     private fun counter(sessionId: String?): AtomicInteger =
         counters.getOrPut(sessionId ?: "unknown") { AtomicInteger(0) }
 
+    /** 返回当前所有会话日志文件，按文件名排序，供占用统计与清理使用。 */
+    fun listLogFiles(): List<File> {
+        val dir = logDir ?: return emptyList()
+        return dir.listFiles { f -> f.isFile && f.name.startsWith("session-") }
+            ?.sortedBy { it.name }
+            ?: emptyList()
+    }
+
+    /**
+     * 删除全部会话日志，返回释放的字节数。
+     *
+     * 排到 [ioExecutor] 上执行，避免与排队中的追加写交错（本类每次写入都是 append 后即关，不持有句柄）。
+     * 同时重置调用序号，清空后新日志从 #1 开始。
+     */
+    fun clearLogs(): Long {
+        val dir = logDir ?: return 0L
+        val freed = java.util.concurrent.atomic.AtomicLong(0)
+        val latch = java.util.concurrent.CountDownLatch(1)
+        ioExecutor.execute {
+            runCatching {
+                dir.listFiles { f -> f.isFile && f.name.startsWith("session-") }?.forEach { file ->
+                    val size = file.length()
+                    if (file.delete()) freed.addAndGet(size)
+                }
+                counters.clear()
+            }.onFailure { Log.e(TAG, "清空 AI 会话日志失败", it) }
+            latch.countDown()
+        }
+        runCatching { latch.await(5, java.util.concurrent.TimeUnit.SECONDS) }
+        return freed.get()
+    }
+
     private fun now(): String = timestampFormat.format(java.time.Instant.now())
 
     private fun stringify(body: Any?): String = when (body) {

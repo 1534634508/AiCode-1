@@ -98,6 +98,7 @@ import compose.icons.feathericons.Info
 import compose.icons.feathericons.Lock
 import compose.icons.feathericons.Moon
 import compose.icons.feathericons.Edit2
+import compose.icons.feathericons.PieChart
 import compose.icons.feathericons.Plus
 import compose.icons.feathericons.RefreshCw
 import compose.icons.feathericons.Save
@@ -143,6 +144,7 @@ internal enum class SettingsSection(@param:StringRes val titleRes: Int) {
     Permissions(R.string.settings_permissions),
     AppPermissions(R.string.settings_app_permissions),
     RemoteServers(R.string.settings_remote_servers),
+    Storage(R.string.settings_storage),
     TokenStats(R.string.settings_token_stats_title),
     Backup(R.string.settings_backup),
     About(R.string.settings_about)
@@ -453,7 +455,12 @@ fun SettingsScreen(
                     onNavigateBack = { section = SettingsSection.Menu }
                 )
 
-            else -> Scaffold(
+            else -> {
+            // 存储页的顶栏刷新按钮与页面内容要共用同一个 ViewModel，故在此分支创建；
+            // 它的构造即触发一次全盘统计，不能提到 SettingsScreen 顶层（那样每次进设置页都会扫盘）。
+            val storageViewModel: com.aicode.feature.settings.presentation.StorageViewModel? =
+                if (current == SettingsSection.Storage) androidx.hilt.navigation.compose.hiltViewModel() else null
+            Scaffold(
         containerColor = settingsPageBackground(),
         topBar = {
             TopAppBar(
@@ -612,6 +619,16 @@ fun SettingsScreen(
                                 Icon(
                                     FeatherIcons.Trash2,
                                     contentDescription = stringResource(R.string.settings_token_stats_reset),
+                                    tint = MaterialTheme.colorScheme.onBackground,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                        }
+                        SettingsSection.Storage -> {
+                            IconButton(onClick = { storageViewModel?.refresh() }) {
+                                Icon(
+                                    FeatherIcons.RefreshCw,
+                                    contentDescription = stringResource(R.string.storage_refresh),
                                     tint = MaterialTheme.colorScheme.onBackground,
                                     modifier = Modifier.size(22.dp)
                                 )
@@ -787,6 +804,7 @@ fun SettingsScreen(
                     onSelectProviderPage = { viewModel.setProviderStatsPage(it) },
                     onSelectModelPage = { viewModel.setModelStatsPage(it) }
                 )
+                SettingsSection.Storage -> storageViewModel?.let { StorageSectionHost(viewModel = it) }
                 SettingsSection.ProviderEditor -> {} // 已在上方 early return 处理
                 SettingsSection.SkillEditor -> {} // 已在上方 early return 处理
                 SettingsSection.SubAgentEditor -> {} // 已在上方 early return 处理
@@ -801,6 +819,7 @@ fun SettingsScreen(
             }
         }
     }
+        } // else 分支结束（storageViewModel 作用域）
         } // 详情区 when 结束
         } // AnimatedContent 结束
         } // 右栏结束
@@ -1185,6 +1204,12 @@ internal fun SettingsMenu(
                 icon = FeatherIcons.BarChart2,
                 title = stringResource(SettingsSection.TokenStats.titleRes),
                 onClick = { onOpen(SettingsSection.TokenStats) }
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.PieChart,
+                title = stringResource(SettingsSection.Storage.titleRes),
+                onClick = { onOpen(SettingsSection.Storage) }
             )
             SettingsDivider()
             SettingsRow(

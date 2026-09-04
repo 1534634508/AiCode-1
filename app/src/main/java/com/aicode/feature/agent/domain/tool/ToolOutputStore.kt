@@ -38,6 +38,9 @@ class ToolOutputStore @Inject constructor(
 
     private val json = Json { encodeDefaults = true }
 
+    /** 存档目录（宿主路径）。对外只用于占用统计与清理，写入仍走本类。 */
+    val outputDir: File get() = File(containerInstaller.aicodeDir, OUTPUT_DIR)
+
     fun process(toolName: String, callId: String, result: ToolResult): ToolResult {
         return when (result) {
             is ToolResult.Success -> ToolResult.Success(processElement(toolName, callId, result.data))
@@ -137,7 +140,7 @@ class ToolOutputStore @Inject constructor(
 
     private fun writeFullOutput(toolName: String, callId: String, text: String): StoredPathResult {
         return try {
-            val dir = File(containerInstaller.aicodeDir, OUTPUT_DIR).apply { mkdirs() }
+            val dir = outputDir.apply { mkdirs() }
             val file = uniqueOutputFile(dir, toolName, callId)
             file.writeText(text, Charsets.UTF_8)
             val path = "$AICODE_ROOT/$OUTPUT_DIR/${file.name}"

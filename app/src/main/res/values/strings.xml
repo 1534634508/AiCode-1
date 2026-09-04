@@ -65,6 +65,46 @@
     <string name="settings_token_stats_reset_title">重置 Token 统计</string>
     <string name="settings_token_stats_reset_confirm">将清空全部调用记录，此操作不可恢复。确定重置？</string>
 
+    <!-- 存储空间页 -->
+    <string name="settings_storage">存储空间</string>
+    <string name="storage_refresh">重新统计</string>
+    <string name="storage_total_title">应用占用</string>
+    <string name="storage_scanning">统计中…</string>
+    <string name="storage_device_free">设备可用 %1$s / 共 %2$s</string>
+    <string name="storage_section_breakdown">占用明细</string>
+    <string name="storage_section_reclaimable">可释放空间</string>
+    <string name="storage_breakdown_note">点击带箭头的分类可展开明细。删会话可减小聊天记录，容器与工作区请在各自的页面重置或删除；外部目录工作区位于设备存储，未计入。</string>
+    <string name="storage_freed">已释放 %1$s</string>
+    <string name="storage_clean">清理</string>
+    <string name="storage_clean_all">一键清理</string>
+    <string name="storage_clean_all_desc">清理以上全部项，不动聊天记录、容器与工作区</string>
+    <string name="storage_clean_confirm_title">确认清理</string>
+    <string name="storage_clean_confirm_all">将清理缓存、日志、工具输出与识图会话缓存，共约 %1$s。聊天记录、容器与工作区不受影响。</string>
+    <string name="storage_clean_confirm_single">将删除“%1$s”，约 %2$s。此操作不可恢复。</string>
+    <string name="storage_category_chat">聊天记录</string>
+    <string name="storage_category_container">容器</string>
+    <string name="storage_category_container_images">容器镜像包</string>
+    <string name="storage_category_workspaces">工作区</string>
+    <string name="storage_category_ai_config">AI 配置与产物</string>
+    <string name="storage_category_checkpoints">检查点</string>
+    <string name="storage_category_logs">日志</string>
+    <string name="storage_category_caches">缓存</string>
+    <string name="storage_category_other">其他数据</string>
+    <string name="storage_category_apk">应用安装包</string>
+    <string name="storage_clean_caches">缓存文件</string>
+    <string name="storage_clean_caches_desc">临时文件，删除后会自动重建</string>
+    <string name="storage_clean_logs">运行日志</string>
+    <string name="storage_clean_logs_desc">应用日志与 AI 请求日志，删除不影响功能</string>
+    <string name="storage_clean_tool_output">工具输出存档</string>
+    <string name="storage_clean_tool_output_desc">AI 超长工具输出的落盘副本，删除后旧消息里的输出路径不再可读</string>
+    <string name="storage_clean_vision">识图会话缓存</string>
+    <string name="storage_clean_vision_desc">识图追问的历史，删除后无法继续追问旧图片</string>
+    <string name="storage_untitled_session">未命名会话</string>
+    <string name="storage_chat_messages">%1$d 条消息</string>
+    <string name="storage_workspace_attachments">含附件 %1$s</string>
+    <string name="storage_logs_app">应用日志</string>
+    <string name="storage_logs_ai">AI 请求日志</string>
+
     <!-- 语言设置页 -->
     <string name="language_follow_system">跟随系统</string>
 

@@ -29,10 +29,10 @@ class VisionSessionStore @Inject constructor(
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val mutex = Mutex()
 
-    private fun fileFor(id: String): File = File(
-        File(containerInstaller.aicodeDir, SESSION_DIR),
-        "vision-$id.json"
-    )
+    /** 会话文件目录（宿主路径）。对外只用于占用统计与清理。 */
+    val sessionDir: File get() = File(containerInstaller.aicodeDir, SESSION_DIR)
+
+    private fun fileFor(id: String): File = File(sessionDir, "vision-$id.json")
 
     /** 读取会话历史；会话不存在或文件损坏返回 null。 */
     suspend fun load(id: String): List<AgentMessage>? = mutex.withLock {
@@ -57,7 +57,7 @@ class VisionSessionStore @Inject constructor(
     }
 
     private fun evictIfNeeded() {
-        val dir = File(containerInstaller.aicodeDir, SESSION_DIR)
+        val dir = sessionDir
         val files = dir.listFiles { f -> f.isFile && f.name.startsWith("vision-") && f.name.endsWith(".json") }
             ?.sortedByDescending { it.lastModified() }
             ?: return

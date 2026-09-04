@@ -65,6 +65,46 @@
     <string name="settings_token_stats_reset_title">Reset token stats</string>
     <string name="settings_token_stats_reset_confirm">All call records will be permanently deleted. Reset?</string>
 
+    <!-- Storage page -->
+    <string name="settings_storage">Storage</string>
+    <string name="storage_refresh">Rescan</string>
+    <string name="storage_total_title">Used by AiCode</string>
+    <string name="storage_scanning">Calculating…</string>
+    <string name="storage_device_free">%1$s free of %2$s</string>
+    <string name="storage_section_breakdown">Breakdown</string>
+    <string name="storage_section_reclaimable">Reclaimable space</string>
+    <string name="storage_breakdown_note">Tap a category with an arrow to expand details. Delete sessions to shrink chat history; reset or remove containers and workspaces from their own pages. External folder workspaces live on device storage and are not counted.</string>
+    <string name="storage_freed">Freed %1$s</string>
+    <string name="storage_clean">Clean</string>
+    <string name="storage_clean_all">Clean all</string>
+    <string name="storage_clean_all_desc">Cleans every item above; chat history, containers and workspaces are untouched</string>
+    <string name="storage_clean_confirm_title">Confirm cleanup</string>
+    <string name="storage_clean_confirm_all">Caches, logs, tool output and vision session cache will be deleted (about %1$s). Chat history, containers and workspaces are not affected.</string>
+    <string name="storage_clean_confirm_single">“%1$s” will be deleted (about %2$s). This cannot be undone.</string>
+    <string name="storage_category_chat">Chat history</string>
+    <string name="storage_category_container">Containers</string>
+    <string name="storage_category_container_images">Container images</string>
+    <string name="storage_category_workspaces">Workspaces</string>
+    <string name="storage_category_ai_config">AI config &amp; output</string>
+    <string name="storage_category_checkpoints">Checkpoints</string>
+    <string name="storage_category_logs">Logs</string>
+    <string name="storage_category_caches">Caches</string>
+    <string name="storage_category_other">Other data</string>
+    <string name="storage_category_apk">App package</string>
+    <string name="storage_clean_caches">Cached files</string>
+    <string name="storage_clean_caches_desc">Temporary files, rebuilt automatically</string>
+    <string name="storage_clean_logs">Log files</string>
+    <string name="storage_clean_logs_desc">App and AI request logs; deleting them affects nothing</string>
+    <string name="storage_clean_tool_output">Tool output archive</string>
+    <string name="storage_clean_tool_output_desc">Saved copies of oversized tool output; output paths in older messages stop resolving</string>
+    <string name="storage_clean_vision">Vision session cache</string>
+    <string name="storage_clean_vision_desc">History for image follow-up questions; old sessions can no longer be continued</string>
+    <string name="storage_untitled_session">Untitled session</string>
+    <string name="storage_chat_messages">%1$d messages</string>
+    <string name="storage_workspace_attachments">incl. attachments %1$s</string>
+    <string name="storage_logs_app">App logs</string>
+    <string name="storage_logs_ai">AI request logs</string>
+
     <!-- Language settings -->
     <string name="language_follow_system">Follow System</string>
 
