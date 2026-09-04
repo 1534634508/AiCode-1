@@ -92,6 +92,7 @@ export default defineConfig({
             { text: '软件权限', link: '/guide/app-permissions' },
             { text: '外观与语言', link: '/guide/appearance' },
             { text: '日志与故障排查', link: '/guide/logs' },
+            { text: '存储空间', link: '/guide/storage' },
             { text: '备份与还原', link: '/guide/backup' },
             { text: '关于与更新', link: '/guide/about' }
           ]
