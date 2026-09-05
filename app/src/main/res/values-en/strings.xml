@@ -496,6 +496,8 @@
     <string name="container_switch_image">Switch Container &amp; Images</string>
     <string name="container_switch_confirm">After switching to "%1$s", the currently running AI sessions will be stopped and terminal tabs will be closed. Continue?</string>
     <string name="container_reset_title">Reset Container</string>
+    <string name="container_resetting_title">Cleaning Container Data</string>
+    <string name="container_resetting_message">Deleting data for "%1$s"…\n%2$s items removed</string>
     <string name="container_reset_confirm">This will delete the rootfs directory of "%1$s" (including installed tools and configs). It will be re-extracted and initialized on next use. Continue?</string>
     <string name="container_builtin_badge">Built-in</string>
     <string name="container_custom_badge">Custom</string>
@@ -1033,6 +1035,7 @@
     <string name="terminal_retry">Retry</string>
     <string name="terminal_no_open_tabs">No open terminal tabs</string>
     <string name="terminal_close_tab">Close Tab</string>
+    <string name="terminal_cleaning_old_container">Cleaning up old container data…\n%1$s items removed</string>
     <string name="terminal_extracting_env">Extracting environment…\n%1$s files processed</string>
     <string name="terminal_installing_packages">Installing python3 / git / pip / node / npm…\n%1$s</string>
     <string name="terminal_preparing_env_failed">Preparing container environment…\n%1$s</string>

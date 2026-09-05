@@ -477,6 +477,8 @@ private fun StatusView(
 
 /** 把容器初始化进度状态映射为 Loading 阶段展示给用户的文案。 */
 private fun containerInitMessage(context: Context, state: ContainerInitState): String = when (state) {
+    is ContainerInitState.CleaningOldRootfs ->
+        context.getString(R.string.terminal_cleaning_old_container, state.processed)
     is ContainerInitState.ExtractingRootfs ->
         context.getString(R.string.terminal_extracting_env, state.processed)
     is ContainerInitState.InstallingPackages ->

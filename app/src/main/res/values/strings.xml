@@ -496,6 +496,8 @@
     <string name="container_switch_image">切换容器与镜像</string>
     <string name="container_switch_confirm">切换到「%1$s」后，当前正在运行的 AI 会话将被停止、终端标签将被关闭。是否继续切换？</string>
     <string name="container_reset_title">重置容器</string>
+    <string name="container_resetting_title">正在清理容器数据</string>
+    <string name="container_resetting_message">正在删除「%1$s」的数据…\n已清理 %2$s 项</string>
     <string name="container_reset_confirm">将删除「%1$s」的 rootfs 目录（含已安装的工具与配置），下次使用时重新解压并初始化。是否继续？</string>
     <string name="container_builtin_badge">内置</string>
     <string name="container_custom_badge">自定义</string>
@@ -1032,6 +1034,7 @@
     <string name="terminal_retry">重试</string>
     <string name="terminal_no_open_tabs">没有打开的终端标签</string>
     <string name="terminal_close_tab">关闭标签</string>
+    <string name="terminal_cleaning_old_container">正在清理旧容器数据…\n已清理 %1$s 项</string>
     <string name="terminal_extracting_env">正在解压环境…\n已处理 %1$s 个文件</string>
     <string name="terminal_installing_packages">正在安装 python3 / git / pip / node / npm…\n%1$s</string>
     <string name="terminal_preparing_env_failed">正在准备容器环境…\n%1$s</string>

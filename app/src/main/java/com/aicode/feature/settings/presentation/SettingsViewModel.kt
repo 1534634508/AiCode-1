@@ -125,6 +125,9 @@ sealed interface ContainerImageDownloadUiState {
     data class Error(val entryId: String, val message: String) : ContainerImageDownloadUiState
 }
 
+/** 重置容器的进行状态：重置中才有值，[deleted] 为已删除的文件与目录数。 */
+data class ContainerResetUiState(val name: String, val deleted: Int)
+
 data class LogViewerUiState(
     val files: List<String> = emptyList(),
     val selectedFileName: String? = null,
@@ -544,6 +547,10 @@ class SettingsViewModel @Inject constructor(
 
     private val _containerImageDownload = MutableStateFlow<ContainerImageDownloadUiState>(ContainerImageDownloadUiState.Idle)
     val containerImageDownload: StateFlow<ContainerImageDownloadUiState> = _containerImageDownload.asStateFlow()
+
+    /** 正在重置的容器（含已删条目数），为 null 说明不在重置。UI 据此弹进度框。 */
+    private val _containerReset = MutableStateFlow<ContainerResetUiState?>(null)
+    val containerReset: StateFlow<ContainerResetUiState?> = _containerReset.asStateFlow()
 
     /** 当前下载任务句柄，取消下载时 cancel 它（底层 OkHttp call 同步中断）。 */
     private var downloadJob: kotlinx.coroutines.Job? = null
@@ -1312,11 +1319,41 @@ class SettingsViewModel @Inject constructor(
 
     /** 重置容器：内置恢复出厂（清覆盖配置 + 删 rootfs），自定义本地镜像删 rootfs 下次重新解压。远程 SSH 无本地数据，UI 不提供入口。 */
     fun resetContainer(profile: ContainerProfile) {
+        if (_containerReset.value != null) return
         viewModelScope.launch {
             if (profile.isBuiltin) {
                 containerSettingsRepository.upsertCustomProfile(ContainerProfile.BUILTIN_ALPINE)
             }
-            containerInstaller.resetRootfs(profile)
+            withResetProgress(profile) { onProgress ->
+                containerInstaller.resetRootfs(profile, onProgress)
+            }
+        }
+    }
+
+    /** 删 profile 附带的 rootfs 清理，带进度；内置与远程 SSH 没本地 rootfs 可删，不弹进度框。 */
+    private suspend fun cleanRootfsWithProgress(profile: ContainerProfile) {
+        if (profile.isBuiltin || profile.rootfsSource is RootfsSource.RemoteSsh) {
+            containerInstaller.deleteCustomRootfs(profile)
+            return
+        }
+        withResetProgress(profile) { onProgress ->
+            containerInstaller.deleteCustomRootfs(profile, onProgress)
+        }
+    }
+
+    /**
+     * 包住一次 rootfs 删除：期间把已删条目数写进 [_containerReset] 驱动进度框，结束后清掉。
+     * 大容器删一遍要几十秒，删除本体在 IO 线程跑，界面只等不卡。
+     */
+    private suspend fun withResetProgress(
+        profile: ContainerProfile,
+        block: suspend ((Int) -> Unit) -> Unit
+    ) {
+        _containerReset.value = ContainerResetUiState(profile.name, 0)
+        try {
+            block { deleted -> _containerReset.value = ContainerResetUiState(profile.name, deleted) }
+        } finally {
+            _containerReset.value = null
         }
     }
 
@@ -1341,7 +1378,7 @@ class SettingsViewModel @Inject constructor(
             val oldUri = (old?.rootfsSource as? RootfsSource.LocalFile)?.uri
             val newUri = (profile.rootfsSource as? RootfsSource.LocalFile)?.uri
             if (old != null && oldUri != newUri) {
-                containerInstaller.deleteCustomRootfs(profile)
+                cleanRootfsWithProgress(profile)
             }
             containerSettingsRepository.upsertCustomProfile(profile)
         }
@@ -1351,7 +1388,7 @@ class SettingsViewModel @Inject constructor(
     fun deleteContainerProfile(profile: ContainerProfile) {
         viewModelScope.launch {
             containerSettingsRepository.deleteCustomProfile(profile.id)
-            containerInstaller.deleteCustomRootfs(profile)
+            cleanRootfsWithProgress(profile)
             if (_activeProfileId.value == profile.id) {
                 // 删除的是当前激活项：切到剩余第一个；列表空则回退内置 id（引擎 Alpine 兜底）
                 val remaining = _customProfiles.value.filterNot { it.id == profile.id }
