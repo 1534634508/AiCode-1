@@ -88,7 +88,7 @@ class AnthropicAdapter @Inject constructor(
             tools = toolDefs,
             stream = false
         )
-        AILogger.logRequest(logSessionId, "Anthropic", model, "POST", url, request)
+        val seq = AILogger.logRequest(logSessionId, "Anthropic", model, "POST", url, request)
 
         val response = try {
             retryStaircase {
@@ -98,10 +98,10 @@ class AnthropicAdapter @Inject constructor(
             throw e
         } catch (e: Exception) {
             val enriched = e.enrichWithHttpErrorBody()
-            AILogger.logError(logSessionId, "Anthropic", enriched)
+            AILogger.logError(logSessionId, "Anthropic", enriched, seq)
             throw enriched
         }
-        AILogger.logResponse(logSessionId, "Anthropic", response)
+        AILogger.logResponse(logSessionId, "Anthropic", response, seq)
 
         var contentText = ""
         var thinkingText = ""
@@ -164,7 +164,7 @@ class AnthropicAdapter @Inject constructor(
             tools = toolDefs,
             stream = true
         )
-        AILogger.logRequest(logSessionId, "Anthropic", model, "POST", url, request)
+        val seq = AILogger.logRequest(logSessionId, "Anthropic", model, "POST", url, request)
         // 累积原始 SSE，整轮结束（或失败）后整体落盘，避免高频写盘。
         val rawSse = StringBuilder()
 
@@ -336,11 +336,11 @@ class AnthropicAdapter @Inject constructor(
         } catch (e: Exception) {
             coroutineContext.ensureActive()
             val enriched = e.enrichWithHttpErrorBody()
-            AILogger.logError(logSessionId, "Anthropic", enriched)
+            AILogger.logError(logSessionId, "Anthropic", enriched, seq)
             throw enriched
         } finally {
             // 无论成功/失败/取消，把已收到的原始 SSE 落盘（重试时会从上次中断处续写）。
-            AILogger.logResponseStream(logSessionId, "Anthropic", rawSse.toString())
+            AILogger.logResponseStream(logSessionId, "Anthropic", rawSse.toString(), seq)
         }
     }.flowOn(Dispatchers.IO)
 

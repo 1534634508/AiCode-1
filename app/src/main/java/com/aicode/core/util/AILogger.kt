@@ -57,9 +57,12 @@ object AILogger {
 
     /**
      * 记录一次请求的 URL 与请求体，并把本会话计数 +1（作为本次交互的序号）。
-     * [body] 传请求对象（用 Gson 序列化为与上送一致的 JSON）或已序列化好的字符串。
+     *
+     * @return 本次分配的序号 `n`，调用方必须把它原样回传给对应的 [logResponse] /
+     *   [logError] / [logResponseStream]，否则同会话内并发请求（如标题生成与主请求并行）
+     *   会让 REQUEST 与 RESPONSE/ERROR 的编号错配——响应晚到时读到的是最新计数器值。
      */
-    fun logRequest(sessionId: String?, provider: String, model: String, method: String, url: String, body: Any?) {
+    fun logRequest(sessionId: String?, provider: String, model: String, method: String, url: String, body: Any?): Int {
         val n = counter(sessionId).incrementAndGet()
         val text = buildString {
             append('\n').append("=".repeat(78)).append('\n')
@@ -70,12 +73,13 @@ object AILogger {
             append(stringify(body)).append('\n')
         }
         write(sessionId, text)
+        return n
     }
 
-    /** 记录一次非流式响应对象（用 Gson 序列化为 JSON）。 */
-    fun logResponse(sessionId: String?, provider: String, body: Any?) {
+    /** 记录一次非流式响应对象（用 Gson 序列化为 JSON）。[seq] 必须来自对应 [logRequest] 的返回值。 */
+    fun logResponse(sessionId: String?, provider: String, body: Any?, seq: Int) {
         val text = buildString {
-            append(now()).append("  RESPONSE #").append(counter(sessionId).get())
+            append(now()).append("  RESPONSE #").append(seq)
             append("   [").append(provider).append("]\n")
             append("--- response body ---\n")
             append(stringify(body)).append('\n')
@@ -83,10 +87,10 @@ object AILogger {
         write(sessionId, text)
     }
 
-    /** 记录一次流式响应的原始 SSE 文本（由调用方按行累积后整体传入）。 */
-    fun logResponseStream(sessionId: String?, provider: String, raw: String) {
+    /** 记录一次流式响应的原始 SSE 文本（由调用方按行累积后整体传入）。[seq] 必须来自对应 [logRequest] 的返回值。 */
+    fun logResponseStream(sessionId: String?, provider: String, raw: String, seq: Int) {
         val text = buildString {
-            append(now()).append("  RESPONSE #").append(counter(sessionId).get())
+            append(now()).append("  RESPONSE #").append(seq)
             append("   [").append(provider).append(" / stream]\n")
             append("--- raw SSE ---\n")
             append(redactLargeMedia(raw).ifBlank { "(空响应)" })
@@ -95,10 +99,10 @@ object AILogger {
         write(sessionId, text)
     }
 
-    /** 记录一次请求失败（取消不算失败，不应走到这里）。 */
-    fun logError(sessionId: String?, provider: String, throwable: Throwable) {
+    /** 记录一次请求失败（取消不算失败，不应走到这里）。[seq] 必须来自对应 [logRequest] 的返回值。 */
+    fun logError(sessionId: String?, provider: String, throwable: Throwable, seq: Int) {
         val text = buildString {
-            append(now()).append("  ERROR #").append(counter(sessionId).get())
+            append(now()).append("  ERROR #").append(seq)
             append("   [").append(provider).append("]\n")
             append(throwable.javaClass.name).append(": ").append(throwable.message ?: "").append('\n')
         }
