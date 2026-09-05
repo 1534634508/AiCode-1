@@ -19,8 +19,10 @@ interface CheckpointDao {
     @Query("SELECT * FROM session_checkpoints WHERE sessionId = :sessionId ORDER BY createdAt ASC")
     suspend fun getCheckpointsForSession(sessionId: String): List<CheckpointEntity>
 
-    @Query("SELECT * FROM session_checkpoints WHERE userMessageId = :messageId LIMIT 1")
-    suspend fun getCheckpointByMessageId(messageId: String): CheckpointEntity?
+    // 撤销必须限定会话：不同会话的 checkpoint 可能挂着同一个 messageId 之外的历史，
+    // 全局按 messageId 查会定位到别会话的 checkpoint 并还原它名下的文件。
+    @Query("SELECT * FROM session_checkpoints WHERE sessionId = :sessionId AND userMessageId = :messageId LIMIT 1")
+    suspend fun getCheckpointBySessionAndMessage(sessionId: String, messageId: String): CheckpointEntity?
 
     @Query("SELECT * FROM session_checkpoints WHERE id = :checkpointId LIMIT 1")
     suspend fun getCheckpointById(checkpointId: String): CheckpointEntity?

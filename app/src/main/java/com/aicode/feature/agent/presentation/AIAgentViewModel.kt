@@ -1677,9 +1677,9 @@ class AIAgentViewModel @Inject constructor(
         setStreamingReasoning(sessionId, null)
         setCompacting(sessionId, false)
         setRetryState(sessionId, null)
-        checkpointManager.setActiveCheckpointId(null)
+        checkpointManager.setActiveCheckpointId(sessionId, null)
 
-        val checkpoint = checkpointDao.getCheckpointByMessageId(messageId)
+        val checkpoint = checkpointDao.getCheckpointBySessionAndMessage(sessionId, messageId)
         val targetMsgEntity = agentMessageDao.getMessageById(messageId) ?: return@launch
         val attachments = targetMsgEntity.toUIMessage().attachments
 
