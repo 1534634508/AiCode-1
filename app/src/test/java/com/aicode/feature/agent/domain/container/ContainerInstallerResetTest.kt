@@ -105,6 +105,22 @@ class ContainerInstallerResetTest {
         assertEquals("keep me", keep.readText())
     }
 
+    @Test
+    fun prootTmpDirFor_按容器隔离_重置内置不影响自定义容器的临时目录() = runBlocking {
+        val custom = localProfile("custom-4")
+        fakeRootfs(File(filesDir, "rootfs_custom-4"), ".installed_custom")
+        File(filesDir, "rootfs_custom-4/tmp").mkdirs()
+        fakeRootfs(File(filesDir, "rootfs"), ".installed")
+        File(filesDir, "rootfs/tmp").mkdirs()
+
+        installer.resetRootfs(ContainerProfile.BUILTIN_ALPINE)
+
+        // PROOT_TMP_DIR 曾固定取内置 rootfs 的 tmp，重置内置容器会让所有容器报 can't canonicalize。
+        val customTmp = installer.prootTmpDirFor(custom)
+        assertEquals(File(filesDir, "rootfs_custom-4/tmp"), customTmp)
+        assertTrue("自定义容器的 PROOT_TMP_DIR 不能随内置容器重置而消失", customTmp.isDirectory)
+    }
+
     private fun localProfile(id: String) = ContainerProfile(
         id = id,
         name = id,

@@ -257,12 +257,21 @@ class ContainerInstaller @Inject constructor(
         get() = nativeLibDir
 
     /**
-     * PRoot 在 Android 上必须的临时目录（Android 没有 /tmp）。
+     * 内置容器的 PRoot 临时目录（Android 没有 /tmp）。**私有**：容器启动一律走 [prootTmpDirFor]，
+     * 免得又把别的容器指到内置 rootfs 里来。
      * 放在 rootfs 的 /tmp（宿主 filesDir/rootfs/tmp）：cache 目录会被系统清理（清缓存后 proot
-     * 找不到临时目录报 can't canonicalize），files 目录稳定；rootfs 重装后自带 /tmp 会重建，无需额外处理。
+     * 找不到临时目录报 can't canonicalize），files 目录稳定。
      */
-    val prootTmpDir: File
+    private val prootTmpDir: File
         get() = File(rootfsDir, "tmp")
+
+    /**
+     * [profile] 自己 rootfs 里的 /tmp，即该容器的 `PROOT_TMP_DIR`。
+     *
+     * 必须按 profile 取：这是宿主路径，各容器 rootfs 目录相互隔离，共用内置容器的 tmp 会在内置 rootfs
+     * 被重置删掉后让其它容器一起报 can't canonicalize（内置 rootfs 存在时能跑通只是巧合）。
+     */
+    fun prootTmpDirFor(profile: ContainerProfile): File = File(rootfsDirFor(profile), "tmp")
 
     /** 标记文件，内容是已安装的版本号 */
     private val installedMarker: File
@@ -363,7 +372,7 @@ class ContainerInstaller @Inject constructor(
             is RootfsSource.RemoteSsh -> { /* 无本地 rootfs，上面已提前 return */ }
         }
         configureResolvConf(dest)
-        prootTmpDir.mkdirs()
+        prootTmpDirFor(profile).mkdirs()
         repairRootfsCompatibility(dest)
         customInstalledMarker(profile).writeText("custom")
         FileLogger.i(TAG, "自定义容器 rootfs 安装完成：${profile.id}")
