@@ -478,12 +478,18 @@ fun AIChatPanel(
 
     // 回底按钮的显示门槛：只用「不在底部」会让流式增长的那一两帧（校准循环还没把视口拉回）
     // 也算离底，按钮跟着闪。要求离底超过半个视口，用户真的翻上去看历史时才出现。
-    val isFarFromBottom by remember(inputBarReservePx) {
+    // messagesReady / messages.isEmpty() 与 totalItemsCount 是同一枚硬币的两面：layoutInfo 是
+    // 「最后一次布局 pass」的产物，LazyColumn 卸载（空会话 WelcomeState、加载占位）后不会自动
+    // 清空——旧会话翻历史后切到空会话，残留布局会让按钮悬在新会话上。totalItemsCount 再拦截
+    // 「新列表尚未按当前消息重测」（layout 开始前 layoutInfo 仍是旧会话的）那一帧。
+    val isFarFromBottom by remember(inputBarReservePx, messagesReady, messages.size) {
         derivedStateOf {
+            if (!messagesReady || messages.isEmpty()) return@derivedStateOf false
             if (!listState.canScrollForward) return@derivedStateOf false
             val layout = listState.layoutInfo
             val lastVisible = layout.visibleItemsInfo.lastOrNull()
                 ?: return@derivedStateOf false
+            if (layout.totalItemsCount != messages.size + 1) return@derivedStateOf false
             if (lastVisible.index < layout.totalItemsCount - 1) return@derivedStateOf true
             val safeBottom = layout.viewportEndOffset - inputBarReservePx
             (lastVisible.offset + lastVisible.size) - safeBottom > layout.viewportEndOffset / 2
