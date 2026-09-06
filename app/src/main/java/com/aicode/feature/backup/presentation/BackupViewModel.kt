@@ -9,6 +9,7 @@ import com.aicode.feature.backup.domain.BackupManager
 import com.aicode.feature.backup.domain.BackupOptions
 import com.aicode.feature.backup.domain.RestoreStats
 import com.aicode.feature.backup.domain.WorkspaceBackupMeta
+import com.aicode.core.util.FileLogger
 import dagger.hilt.android.lifecycle.HiltViewModel
 import com.aicode.R
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -94,6 +95,7 @@ class BackupViewModel @Inject constructor(
         _state.value = BackupState.Working
         viewModelScope.launch {
             val pw = password.toCharArray().takeIf { it.isNotEmpty() }
+            FileLogger.i(TAG, "导入请求：${describeUri(uri)}（${if (pw != null) "加密" else "明文"}）")
             try {
                 val input = withContext(Dispatchers.IO) {
                     context.contentResolver.openInputStream(uri)
@@ -133,21 +135,48 @@ class BackupViewModel @Inject constructor(
 
     private suspend fun restoreFromUri(uri: Uri, pw: CharArray?, selected: Set<String>?) {
         try {
+            FileLogger.i(TAG, "开始还原：${describeUri(uri)}${if (selected != null) "，勾选工作区=${selected.size}个" else "，全量"}")
             val input = withContext(Dispatchers.IO) {
                 context.contentResolver.openInputStream(uri)
                     ?: throw IllegalArgumentException(context.getString(R.string.backup_read_failed))
             }
             input.use { backupManager.import(it, pw, selected) }
-                .onSuccess { _state.value = BackupState.ImportSuccess(it) }
-                .onFailure { _state.value = BackupState.Error(describeImportError(it)) }
+                .onSuccess {
+                    FileLogger.i(TAG, "还原成功：$it")
+                    _state.value = BackupState.ImportSuccess(it)
+                }
+                .onFailure {
+                    FileLogger.e(TAG, "还原失败", it)
+                    _state.value = BackupState.Error(describeImportError(it))
+                }
         } catch (e: Exception) {
+            FileLogger.e(TAG, "还原异常", e)
             _state.value = BackupState.Error(describeImportError(e))
         }
     }
 
+    /** 日志用 URI 摘要：只保留 scheme://authority/最后一段，避免记录完整路径。 */
+    private fun describeUri(uri: Uri): String {
+        val last = uri.lastPathSegment ?: ""
+        return "${uri.scheme}://${uri.authority}/…/$last"
+    }
+
     private fun describeImportError(e: Throwable): String = when (e) {
         is BackupDecryptionException -> e.message ?: context.getString(R.string.backup_wrong_password)
-        else -> e.message ?: context.getString(R.string.backup_import_failed)
+        else -> buildString {
+            append(e.message ?: e::class.simpleName ?: context.getString(R.string.backup_import_failed))
+            // 诊断期附上 cause 链（最多两层），方便定位真实异常
+            var cause = e.cause
+            var depth = 0
+            while (cause != null && depth < 2) {
+                append("\nCaused by: ")
+                append(cause::class.simpleName ?: "未知异常")
+                append(": ")
+                append(cause.message ?: "")
+                cause = cause.cause
+                depth++
+            }
+        }
     }
 
     fun reset() {
@@ -155,6 +184,7 @@ class BackupViewModel @Inject constructor(
     }
 
     companion object {
+        private const val TAG = "Backup"
         private const val KEY_PROVIDERS = "providers"
         private const val KEY_REMOTE_CONNECTIONS = "remote_connections"
         private const val KEY_CHAT_HISTORY = "chat_history"

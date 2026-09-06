@@ -1,6 +1,7 @@
 package com.aicode.feature.backup.data
 
 import android.content.Context
+import com.aicode.core.util.FileLogger
 import com.aicode.core.util.GitIgnoreMatcher
 import com.aicode.feature.agent.data.local.dao.AgentMessageDao
 import com.aicode.feature.agent.data.local.dao.ChatSessionDao
@@ -175,11 +176,15 @@ class BackupManagerImpl @Inject constructor(
     ): Result<RestoreStats> {
         val pw = password?.takeIf { it.isNotEmpty() }
         return withContext(Dispatchers.IO) {
+            FileLogger.i(TAG, "导入备份开始（${if (pw != null) "加密" else "明文"}${if (selectedWorkspaces != null) "，勾选工作区=${selectedWorkspaces.size}个" else "，全量"}）")
             runCatching {
                 openTar(input, pw).use { source ->
                     restoreFromTar(source.tar, selectedWorkspaces)
                 }
-            }.recoverCatching { e ->
+            }
+            .onSuccess { FileLogger.i(TAG, "导入备份完成：$it") }
+            .onFailure { FileLogger.e(TAG, "导入备份失败", it) }
+            .recoverCatching { e ->
                 when (e) {
                     is BackupDecryptionException -> throw e
                     is IllegalStateException -> throw e
@@ -199,6 +204,7 @@ class BackupManagerImpl @Inject constructor(
     override suspend fun previewImport(input: InputStream, password: CharArray?): Result<ImportPreview> {
         val pw = password?.takeIf { it.isNotEmpty() }
         return withContext(Dispatchers.IO) {
+            FileLogger.i(TAG, "导入预览开始（${if (pw != null) "加密" else "明文"}）")
             runCatching {
                 openTar(input, pw).use { source ->
                     val tar = source.tar
@@ -217,7 +223,10 @@ class BackupManagerImpl @Inject constructor(
                     }
                     ImportPreview(workspaces)
                 }
-            }.recoverCatching { e ->
+            }
+            .onSuccess { FileLogger.i(TAG, "导入预览完成：${it.workspaces.size} 个工作区") }
+            .onFailure { FileLogger.e(TAG, "导入预览失败", it) }
+            .recoverCatching { e ->
                 when (e) {
                     is BackupDecryptionException -> throw e
                     is IllegalStateException -> throw e
@@ -237,10 +246,12 @@ class BackupManagerImpl @Inject constructor(
     /** 打开 tar 流：先按需解密到临时文件，再解压；调用方负责 [TarSource.close]。 */
     private fun openTar(input: InputStream, pw: CharArray?): TarSource {
         if (pw == null) {
+            FileLogger.i(TAG, "明文备份：直接解压 tar.gz")
             val p = BufferedInputStream(input)
             val gz = GzipCompressorInputStream(p)
             return TarSource(TarArchiveInputStream(gz), null)
         }
+        FileLogger.i(TAG, "加密备份：先解密到临时文件")
         val temp = createTempFile()
         try {
             BufferedInputStream(input).use { src ->
@@ -456,19 +467,25 @@ class BackupManagerImpl @Inject constructor(
                 }
                 FILE_SESSIONS -> {
                     val currentWorkspacePath = workspaceRepository.currentPath()
-                    stats += RestoreStats(chatSessions = restoreJsonl(tar, ChatSessionDto.serializer()) { dtos ->
+                    val count = restoreJsonl(tar, ChatSessionDto.serializer()) { dtos ->
                         chatSessionDao.upsertAll(dtos.map { it.copy(workspacePath = currentWorkspacePath).toEntity() })
-                    })
+                    }
+                    FileLogger.i(TAG, "恢复会话 $count 条")
+                    stats += RestoreStats(chatSessions = count)
                 }
                 FILE_MESSAGES -> {
-                    stats += RestoreStats(agentMessages = restoreJsonl(tar, AgentMessageDto.serializer()) { dtos ->
+                    val count = restoreJsonl(tar, AgentMessageDto.serializer()) { dtos ->
                         agentMessageDao.insertAll(dtos.map { it.toEntity() })
-                    })
+                    }
+                    FileLogger.i(TAG, "恢复消息 $count 条")
+                    stats += RestoreStats(agentMessages = count)
                 }
                 FILE_TODOS -> {
-                    stats += RestoreStats(todoItems = restoreJsonl(tar, TodoItemDto.serializer()) { dtos ->
+                    val count = restoreJsonl(tar, TodoItemDto.serializer()) { dtos ->
                         todoItemDao.upsertAll(dtos.map { it.toEntity() })
-                    })
+                    }
+                    FileLogger.i(TAG, "恢复待办 $count 条")
+                    stats += RestoreStats(todoItems = count)
                 }
                 else -> {
                     if (entry.name.startsWith(WORKSPACE_PREFIX)) {
@@ -478,7 +495,11 @@ class BackupManagerImpl @Inject constructor(
             }
             entry = tar.nextEntry
         }
-        val meta = metadata ?: error("不是有效的 AiCode 备份文件：缺少 metadata.json")
+        val meta = metadata ?: run {
+            FileLogger.e(TAG, "导入失败：tar 中缺少 metadata.json")
+            error("不是有效的 AiCode 备份文件：缺少 metadata.json")
+        }
+        FileLogger.i(TAG, "tar 解析完成，开始还原元数据段")
         return stats + restoreMeta(meta)
     }
 
@@ -494,7 +515,9 @@ class BackupManagerImpl @Inject constructor(
             for (i in 0 until n) {
                 if (buffer[i] == '\n'.code.toByte()) {
                     if (line.size() > 0) {
-                        batch.add(json.decodeFromString(serializer, line.toString(Charsets.UTF_8)))
+                        // 注意：ByteArrayOutputStream.toString(Charset) 是 API 33 才有的方法，
+                        // 在 Android 13 以下会抛 NoSuchMethodError，必须用 String(byte[], Charset) 构造器。
+                        batch.add(json.decodeFromString(serializer, String(line.toByteArray(), Charsets.UTF_8)))
                         line.reset()
                         if (batch.size >= PAGE_SIZE) {
                             count += batch.size
@@ -510,7 +533,7 @@ class BackupManagerImpl @Inject constructor(
             }
         }
         if (line.size() > 0) {
-            batch.add(json.decodeFromString(serializer, line.toString(Charsets.UTF_8)))
+            batch.add(json.decodeFromString(serializer, String(line.toByteArray(), Charsets.UTF_8)))
         }
         if (batch.isNotEmpty()) {
             count += batch.size
@@ -547,6 +570,11 @@ class BackupManagerImpl @Inject constructor(
 
     /** 元数据段还原（小表 + 应用设置），新旧格式共用。 */
     private suspend fun restoreMeta(meta: BackupMetadata): RestoreStats {
+        FileLogger.i(
+            TAG,
+            "还原元数据：providers=${meta.providers.size} remoteConnections=${meta.remoteConnections.size} remoteMounts=${meta.remoteMounts.size} " +
+                "mcpServers=${meta.mcpServers.size} permissionRules=${meta.globalPermissionRules.size} syncSettings=${meta.syncSettings != null}"
+        )
         if (meta.providers.isNotEmpty()) {
             aiProviderDao.insertAllProviders(meta.providers.map { it.toEntity() })
         }
@@ -621,6 +649,7 @@ class BackupManagerImpl @Inject constructor(
         val target = File(wsDir, segments[2])
         target.parentFile?.mkdirs()
         FileOutputStream(target).use { out -> tar.copyTo(out) }
+        FileLogger.i(TAG, "恢复工作区文件：${ws.name}/${segments[2]}")
         return RestoreStats(workspaceFiles = 1)
     }
 
@@ -723,6 +752,7 @@ class BackupManagerImpl @Inject constructor(
     private fun TodoItemDto.toEntity() = TodoItemEntity(id, sessionId, subject, description, status, priority, order, createdAt, updatedAt)
 
     private companion object {
+        const val TAG = "BackupManager"
         const val PAGE_SIZE = 500
         const val FILE_METADATA = "metadata.json"
         const val FILE_SESSIONS = "chatSessions.jsonl"
