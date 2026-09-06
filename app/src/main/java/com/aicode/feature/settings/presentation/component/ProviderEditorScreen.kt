@@ -49,7 +49,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -79,6 +78,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.SnapshotStateList
 import kotlinx.coroutines.delay
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Alignment
@@ -91,6 +91,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -112,6 +113,7 @@ import com.aicode.core.ui.AppTextField
 import com.aicode.core.ui.FloatingTabBar
 import com.aicode.core.ui.FloatingTabItem
 import com.aicode.feature.settings.data.local.CustomModelMetadataStore
+import com.aicode.feature.settings.data.local.ProviderPreset
 import com.aicode.feature.settings.data.remote.ModelTestResult
 import com.aicode.feature.settings.domain.model.AIProviderConfig
 import com.aicode.feature.settings.domain.model.KeyRotationStrategy
@@ -146,6 +148,7 @@ import compose.icons.feathericons.Plus
 import compose.icons.feathericons.RefreshCw
 import compose.icons.feathericons.Slash
 import compose.icons.feathericons.Sliders
+import compose.icons.feathericons.Trash2
 import compose.icons.feathericons.X
 import com.aicode.feature.agent.presentation.component.AdaptiveCardView
 import com.aicode.feature.settings.domain.model.ProviderBalanceResult
@@ -162,11 +165,19 @@ fun ProviderEditorScreen(
     viewModel: SettingsViewModel,
     initialProvider: AIProviderConfig?,
     onNavigateBack: () -> Unit,
-    onSave: (AIProviderConfig) -> Unit
+    onSave: (AIProviderConfig) -> Unit,
+    /**
+     * 从预设库新建时预填的名称/类型/Base URL/模型列表；
+     * 仅当 [initialProvider] 为 null（新建场景）时生效。
+     */
+    presetPrefill: ProviderPreset? = null
 ) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
-    var name by remember { mutableStateOf(initialProvider?.name ?: "") }
+    val presetType by remember {
+        mutableStateOf(presetPrefill?.type?.let { runCatching { ProviderType.valueOf(it) }.getOrNull() })
+    }
+    var name by remember { mutableStateOf(initialProvider?.name ?: presetPrefill?.name ?: "") }
     var apiKey by remember { mutableStateOf(initialProvider?.apiKey ?: "") }
     var apiKeyVisible by remember { mutableStateOf(false) }
     var multiKeyEnabled by remember { mutableStateOf(initialProvider?.multiKeyEnabled ?: false) }
@@ -174,12 +185,17 @@ fun ProviderEditorScreen(
     var keyRotationStrategy by remember { mutableStateOf(initialProvider?.keyRotationStrategy ?: KeyRotationStrategy.SEQUENTIAL) }
     var keyFailoverThreshold by remember { mutableIntStateOf(initialProvider?.keyFailoverThreshold ?: 2) }
     var keyCooldownMinutes by remember { mutableIntStateOf(initialProvider?.keyCooldownMinutes ?: 5) }
-    var baseUrl by remember { mutableStateOf(initialProvider?.baseUrl ?: "") }
+    var baseUrl by remember { mutableStateOf(initialProvider?.baseUrl ?: presetPrefill?.baseUrl ?: "") }
     var useFullUrl by remember { mutableStateOf(initialProvider?.useFullUrl ?: false) }
     var useResponseApi by remember { mutableStateOf(initialProvider?.useResponseApi ?: false) }
     var anthropicCacheBreakpoints by remember { mutableStateOf(initialProvider?.anthropicCacheBreakpoints ?: true) }
     var openaiChatCacheKey by remember { mutableStateOf(initialProvider?.openaiChatCacheKey ?: false) }
     var balanceScriptPath by remember { mutableStateOf(initialProvider?.balanceScriptPath ?: "") }
+    val scriptParams = remember {
+        mutableStateListOf<Pair<String, String>>().apply {
+            addAll(initialProvider?.scriptParams?.toList() ?: emptyList())
+        }
+    }
     var balanceRefreshInterval by remember { mutableIntStateOf(initialProvider?.balanceRefreshInterval ?: 5) }
     var userAgent by remember { mutableStateOf(initialProvider?.userAgent ?: "") }
     var proxyEnabled by remember { mutableStateOf(initialProvider?.proxyEnabled ?: false) }
@@ -189,9 +205,13 @@ fun ProviderEditorScreen(
     var proxyUsername by remember { mutableStateOf(initialProvider?.proxyUsername ?: "") }
     var proxyPassword by remember { mutableStateOf(initialProvider?.proxyPassword ?: "") }
     var isEnabled by remember { mutableStateOf(initialProvider?.isEnabled ?: true) }
-    var type by remember { mutableStateOf(initialProvider?.type ?: ProviderType.OPENAI) }
+    var type by remember { mutableStateOf(initialProvider?.type ?: presetType ?: ProviderType.OPENAI) }
     val providerId = remember { initialProvider?.id ?: System.currentTimeMillis().toString() }
-    val models = remember { mutableStateListOf<String>().apply { addAll(initialProvider?.models ?: emptyList()) } }
+    val models = remember {
+        mutableStateListOf<String>().apply {
+            addAll(initialProvider?.models ?: presetPrefill?.models ?: emptyList())
+        }
+    }
     val customMetadataStore = remember { CustomModelMetadataStore(context.applicationContext) }
     val scope = rememberCoroutineScope()
     var customMetadata by remember { mutableStateOf<Map<String, ModelMetadata>>(emptyMap()) }
@@ -273,11 +293,12 @@ fun ProviderEditorScreen(
         proxyHost = proxyHost,
         proxyPort = proxyPort,
         proxyUsername = proxyUsername,
-        proxyPassword = proxyPassword
+        proxyPassword = proxyPassword,
+        scriptParams = scriptParams.filter { it.first.isNotBlank() }.toMap()
     ).sanitized()
 
-    // 新建场景下判断用户是否填写了实质内容：名称、API Key、Base URL 任一非空白，或已添加模型。
-    // 全空白时退出不应落库，否则会存入一条名为“新提供商”的空记录。
+    // 新建场景下判断用户是否填写了实质内容：名称、API Key、Base URL 任一非空白，或已添加模型 / DIY 脚本参数。
+    // 全空白时退出编辑页（防止新建一个名为「默认供应商」的空记录）。
     fun hasSubstantiveInput(): Boolean =
         initialProvider != null ||
             name.isNotBlank() ||
@@ -285,6 +306,7 @@ fun ProviderEditorScreen(
             apiKeys.any { it.isNotBlank() } ||
             baseUrl.isNotBlank() ||
             balanceScriptPath.isNotBlank() ||
+            scriptParams.any { it.first.isNotBlank() } ||
             models.isNotEmpty()
 
     fun saveCurrent() {
@@ -593,6 +615,8 @@ fun ProviderEditorScreen(
                                 }
                             }
                         }
+                        SettingsDivider()
+                        ProviderScriptParamsEditor(scriptParams)
                         if (balanceTestState !is ProviderBalanceState.Idle) {
                             SettingsDivider()
                             BalanceTestResultBox(
@@ -2261,6 +2285,113 @@ private fun IntervalSelectionSheet(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/** 自定义面板 (DIY) 脚本参数编辑：Key-Value 列表，保存后注入为 AICODE_KEY_<KEY> 环境变量。 */
+@Composable
+private fun ProviderScriptParamsEditor(
+    scriptParams: SnapshotStateList<Pair<String, String>>
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = Spacing.lg, vertical = Spacing.sm)
+    ) {
+        Text(
+            text = stringResource(R.string.provider_script_params_title),
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Text(
+            text = stringResource(R.string.provider_script_params_desc),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(Spacing.sm))
+        if (scriptParams.isEmpty()) {
+            Text(
+                text = stringResource(R.string.provider_script_params_empty),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+            )
+        } else {
+            scriptParams.forEachIndexed { index, (k, v) ->
+                Card(
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        AppTextField(
+                            value = k,
+                            onValueChange = { scriptParams[index] = it to v },
+                            label = stringResource(R.string.provider_script_param_key),
+                            placeholder = stringResource(R.string.provider_script_param_key_hint),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        AppTextField(
+                            value = v,
+                            onValueChange = { scriptParams[index] = k to it },
+                            label = stringResource(R.string.provider_script_param_value),
+                            placeholder = stringResource(R.string.provider_script_param_value_hint),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            IconButton(
+                                onClick = { scriptParams.removeAt(index) },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    FeatherIcons.Trash2,
+                                    contentDescription = stringResource(R.string.provider_script_param_remove),
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(Spacing.xs))
+        Surface(
+            onClick = { scriptParams.add("" to "") },
+            shape = RoundedCornerShape(10.dp),
+            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier.padding(vertical = 10.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    FeatherIcons.Plus,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(Modifier.width(Spacing.xs))
+                Text(
+                    text = stringResource(R.string.provider_script_param_add),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
             }
         }
     }
