@@ -657,7 +657,8 @@ class BackupManagerImpl @Inject constructor(
         apiKeys = apiKeys,
         keyRotationStrategy = keyRotationStrategy,
         keyFailoverThreshold = keyFailoverThreshold,
-        keyCooldownMinutes = keyCooldownMinutes
+        keyCooldownMinutes = keyCooldownMinutes,
+        scriptParams = scriptParams
     )
 
     private fun ProviderDto.toEntity() = AIProviderEntity(
@@ -681,7 +682,8 @@ class BackupManagerImpl @Inject constructor(
         apiKeys = apiKeys ?: "",
         keyRotationStrategy = keyRotationStrategy ?: "SEQUENTIAL",
         keyFailoverThreshold = keyFailoverThreshold ?: 2,
-        keyCooldownMinutes = keyCooldownMinutes ?: 5
+        keyCooldownMinutes = keyCooldownMinutes ?: 5,
+        scriptParams = scriptParams ?: ""
     )
 
     private fun RemoteConnectionEntity.toDto() = RemoteConnectionDto(

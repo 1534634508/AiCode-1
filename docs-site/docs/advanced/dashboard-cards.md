@@ -81,6 +81,30 @@ AI 助手与开发者可以依据此规范，编写面板脚本（Python / Node 
 | `AICODE_PROVIDER_API_KEY` | `sk-...` | 提供商 API Key |
 | `AICODE_PROVIDER_BASE_URL` | `https://api.openai.com/` | 提供商 Base URL |
 
+#### 自定义脚本参数（面板 / DIY 脚本）
+
+在「提供商编辑 → 面板 (DIY)」中可配置任意数量的自定义脚本参数（Key-Value）。
+执行面板脚本时，每个参数会以 AICODE_KEY_<KEY> 的形式注入脚本环境变量：
+
+- KEY 会规整为**大写**，仅保留字母、数字与下划线，例如 ACCOUNT_ID → AICODE_KEY_ACCOUNT_ID；
+- 同名键不区分大小写，冲突时以后添加的为准；
+- 参数值支持引用当前提供商的配置占位符，避免敏感信息（如 API Key）重复填写。
+
+| 占位符 | 说明 |
+| :--- | :--- |
+| {{PROVIDER_API_KEY}} | 当前生效的 API Key |
+| {{PROVIDER_ID}} | 提供商记录 ID |
+| {{PROVIDER_NAME}} | 提供商名称 |
+| {{PROVIDER_TYPE}} | 协议类型（OPENAI / ANTHROPIC / GEMINI） |
+| {{BASE_URL}} | 提供商 Base URL |
+| {{DEFAULT_MODEL}} | 默认模型 |
+| {{SELECTED_MODEL}} | 当前选中的模型 |
+| {{MODEL}} | 实际生效的模型（优先选中，其次默认） |
+
+示例：配置参数 KEY=ACCOUNT_ID、VALUE={{PROVIDER_API_KEY}}，脚本中将注入
+AICODE_KEY_ACCOUNT_ID=<当前 API Key>。
+
+
 ---
 
 ## 3. 设计理念与架构原则

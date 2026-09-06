@@ -85,6 +85,20 @@ class AIProviderConfigSanitizeTest {
     }
 
     @Test
+    fun scriptParams_trimKeysStripLineBreaksAndDropEmptyKeys() {
+        val sanitized = config().copy(scriptParams = mapOf(
+            " ACCOUNT_ID " to "v1\n",
+            "SECRET" to " sk-abc \n",
+            "  " to "ignored"
+        )).sanitized()
+
+        assertEquals(
+            mapOf("ACCOUNT_ID" to "v1", "SECRET" to "sk-abc"),
+            sanitized.scriptParams
+        )
+    }
+
+    @Test
     fun cleanConfig_unchanged() {
         val clean = config()
 

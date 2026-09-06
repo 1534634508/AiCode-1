@@ -13,6 +13,9 @@ import com.aicode.feature.settings.domain.repository.AIProviderRepository
 import androidx.room.withTransaction
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -24,6 +27,14 @@ class AIProviderRepositoryImpl @Inject constructor(
 
     private companion object {
         const val TAG = "AIProviderRepo"
+        private val json = Json { ignoreUnknownKeys = true }
+
+        private fun encodeScriptParams(params: Map<String, String>): String =
+            if (params.isEmpty()) "" else json.encodeToString(params)
+
+        private fun decodeScriptParams(raw: String): Map<String, String> =
+            if (raw.isBlank()) emptyMap()
+            else runCatching { json.decodeFromString<Map<String, String>>(raw) }.getOrDefault(emptyMap())
     }
 
     override fun getAllProviders(): Flow<List<AIProviderConfig>> {
@@ -111,7 +122,8 @@ class AIProviderRepositoryImpl @Inject constructor(
             proxyHost = proxyHost,
             proxyPort = proxyPort,
             proxyUsername = proxyUsername,
-            proxyPassword = proxyPassword
+            proxyPassword = proxyPassword,
+            scriptParams = decodeScriptParams(scriptParams)
         ).sanitized()
     }
 
@@ -144,7 +156,8 @@ class AIProviderRepositoryImpl @Inject constructor(
             proxyHost = proxyHost,
             proxyPort = proxyPort,
             proxyUsername = proxyUsername,
-            proxyPassword = proxyPassword
+            proxyPassword = proxyPassword,
+            scriptParams = encodeScriptParams(scriptParams)
         )
     }
 }

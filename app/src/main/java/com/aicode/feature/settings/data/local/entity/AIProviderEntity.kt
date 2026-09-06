@@ -47,5 +47,7 @@ data class AIProviderEntity(
     val proxyHost: String = "",
     val proxyPort: Int = 0,
     val proxyUsername: String = "",
-    val proxyPassword: String = ""
+    val proxyPassword: String = "",
+    /** 自定义面板 (DIY) 脚本参数（JSON 编码的 Map<String, String>，空为 ""）。 */
+    val scriptParams: String = ""
 )

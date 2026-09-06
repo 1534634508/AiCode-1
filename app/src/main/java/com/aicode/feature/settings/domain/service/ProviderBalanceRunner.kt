@@ -56,6 +56,8 @@ class ProviderBalanceRunner @Inject constructor(
 ) {
     companion object {
         private const val TAG = "ProviderBalanceRunner"
+        /** 自定义脚本参数写入环境变量的固定前缀，如 AICODE_KEY_ACCOUNT_ID。 */
+        private const val PREFIX_SCRIPT_PARAM = "AICODE_KEY_"
         const val DEFAULT_BALANCE_SCRIPT = "demo_balance.py"
         const val DEFAULT_SUBSCRIPTION_SCRIPT = "demo_subscription.py"
         private const val SCRIPT_TIMEOUT_MS = 15_000L
@@ -718,6 +720,16 @@ class ProviderBalanceRunner @Inject constructor(
             "AICODE_MODEL=${escape(effectiveModel)}"
         )
 
+        // 自定义脚本参数：按提供商配置注入为 AICODE_KEY_<KEY> 环境变量，
+        // 值支持 {{PROVIDER_API_KEY}} / {{BASE_URL}} 等占位符引用，避免敏感信息重复填写。
+        provider.scriptParams.forEach { (key, rawValue) ->
+            if (key.isBlank()) return@forEach
+            val envKey = "AICODE_KEY_" + sanitizeEnvKey(key)
+            if (envKey == PREFIX_SCRIPT_PARAM) return@forEach
+            val resolved = resolveScriptParamPlaceholders(rawValue, provider, effectiveApiKey, effectiveModel)
+            envs.add("$envKey=${escape(resolved)}")
+        }
+
         if (context != null) {
             envs.add("AICODE_WORKSPACE=${escape(context.workspacePath)}")
             envs.add("AICODE_WORKSPACE_NAME=${escape(context.workspaceName)}")
@@ -744,6 +756,34 @@ class ProviderBalanceRunner @Inject constructor(
         }
 
         return envs.joinToString(" ")
+    }
+
+    /** 把用户填写的参数 Key 规整为合法的环境变量名段（大写，仅保留字母/数字/下划线）。 */
+    private fun sanitizeEnvKey(key: String): String =
+        key.trim().uppercase().filter { it in 'A'..'Z' || it in '0'..'9' || it == '_' }
+
+    /** 解析脚本参数值中的 {{...}} 占位符，引用当前提供商配置，避免敏感信息重复填写。 */
+    private fun resolveScriptParamPlaceholders(
+        raw: String,
+        provider: AIProviderConfig,
+        effectiveApiKey: String,
+        effectiveModel: String
+    ): String {
+        var out = raw
+        val placeholders = mapOf(
+            "{{PROVIDER_API_KEY}}" to effectiveApiKey,
+            "{{PROVIDER_ID}}" to provider.id,
+            "{{PROVIDER_NAME}}" to provider.name,
+            "{{PROVIDER_TYPE}}" to provider.type.name,
+            "{{BASE_URL}}" to provider.baseUrl,
+            "{{DEFAULT_MODEL}}" to provider.defaultModel,
+            "{{SELECTED_MODEL}}" to provider.selectedModel,
+            "{{MODEL}}" to effectiveModel
+        )
+        for ((token, value) in placeholders) {
+            out = out.replace(token, value)
+        }
+        return out
     }
 
     private fun buildExecCommand(targetPath: String): String {

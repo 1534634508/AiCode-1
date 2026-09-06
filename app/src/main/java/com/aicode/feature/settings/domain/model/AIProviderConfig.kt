@@ -42,7 +42,13 @@ data class AIProviderConfig(
     val proxyHost: String = "",
     val proxyPort: Int = 0,
     val proxyUsername: String = "",
-    val proxyPassword: String = ""
+    val proxyPassword: String = "",
+    /**
+     * 自定义面板 (DIY) 脚本参数（Key-Value）。
+     * 执行面板脚本时注入为额外环境变量 `AICODE_KEY_<KEY>`，
+     * 值支持引用提供商配置占位符，如 `{{PROVIDER_API_KEY}}`、`{{BASE_URL}}`。
+     */
+    val scriptParams: Map<String, String> = emptyMap()
 ) {
     /** 实际生效的模型：优先 selectedModel，其次 defaultModel。 */
     val effectiveModel: String
@@ -90,7 +96,11 @@ fun AIProviderConfig.sanitized(): AIProviderConfig = copy(
     userAgent = userAgent.stripLineBreaks(),
     proxyHost = proxyHost.stripAllWhitespace(),
     proxyUsername = proxyUsername.stripLineBreaks(),
-    proxyPassword = proxyPassword.stripLineBreaks()
+    proxyPassword = proxyPassword.stripLineBreaks(),
+    scriptParams = scriptParams
+        .mapKeys { (k, _) -> k.trim() }
+        .mapValues { (_, v) -> v.stripLineBreaks() }
+        .filterKeys { it.isNotEmpty() }
 )
 
 enum class ProviderType {
