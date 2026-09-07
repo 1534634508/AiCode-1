@@ -255,6 +255,14 @@ android {
         // Robolectric（迁移测试）需要真实 Android resources
         unitTests.isIncludeAndroidResources = true
     }
+
+    // 迁移测试（MigrationTestHelper）在 Robolectric 下从合并后的 assets 读 Room 导出的 schema，
+    // 路径为 <databaseClass 全限定名>/<version>.json；AGP 不会把 unit test sourceSet 的 assets
+    // 合并进 Robolectric 的 assets（test_config.properties 指向 mergeUniversalDebugAssets），
+    // 故挂在 debug 变体上：迁移测试只跑 universalDebug，release 包不会带上 schema。
+    sourceSets {
+        getByName("debug").assets.srcDir("$projectDir/schemas")
+    }
 }
 
 // 彻底禁用 lintVital<Flavor>Release 任务（三 flavor 各一个），
