@@ -46,8 +46,8 @@ class AnthropicAdapter @Inject constructor(
     /** 是否启用显式缓存断点（cache_control）。默认开启；第三方兼容网关严格校验未知字段时由设置项关闭。 */
     var cacheBreakpointsEnabled: Boolean = true
 
-    /** 自定义请求头 User-Agent；留空使用默认。 */
-    override var userAgent: String = ""
+    /** 自定义请求头：占位符替换后写出，完全覆盖同名默认头。 */
+    override var customHeaders: Map<String, String> = emptyMap()
 
     override var maxOutputTokens: Int? = null
 
@@ -55,7 +55,7 @@ class AnthropicAdapter @Inject constructor(
     override var temperature: Float? = null
 
     private fun extraHeaders(): Map<String, String> =
-        if (userAgent.isNotBlank()) mapOf("User-Agent" to userAgent) else emptyMap()
+        resolveCustomHeaders(customHeaders, logSessionId, apiKey)
 
     override suspend fun complete(
         systemPrompt: String,
@@ -388,8 +388,9 @@ class AnthropicAdapter @Inject constructor(
     /**
      * 思考强度 → Anthropic thinking 配置。
      * - 新模型（4.6+/5 系，支持 adaptive）：effort 档位直传 output_config，thinking 用 adaptive+summarized；
-     *   "none" 关闭思考用 disabled。
-     * - 旧模型（4.5 及更早，仅 budget_tokens）：low/medium/high 映射 1024/4096/8192（须小于 max_tokens）。
+     *   "none" 关闭思考用 disabled；"minimal" 无对应档，归一到 low（官方仅 low/medium/high/xhigh/max）。
+     * - 旧模型（4.5 及更早，仅 budget_tokens）：low/medium/high 映射 1024/4096/8192（须小于 max_tokens），
+     *   minimal 归一到 low，xhigh/max 归一到 high。
      */
     private fun buildThinkingConfig(reasoningEffort: String?): Pair<AnthropicThinkingConfig?, AnthropicOutputConfig?> {
         if (reasoningEffort == null) return null to null
@@ -397,12 +398,15 @@ class AnthropicAdapter @Inject constructor(
             if (reasoningEffort == "none") {
                 return AnthropicThinkingConfig(type = "disabled") to null
             }
-            return AnthropicThinkingConfig(type = "adaptive", display = "summarized") to AnthropicOutputConfig(effort = reasoningEffort)
+            // 官方 effort 无 minimal 档，归一到 low，避免透传非法档位被 400。
+            val effort = if (reasoningEffort == "minimal") "low" else reasoningEffort
+            return AnthropicThinkingConfig(type = "adaptive", display = "summarized") to AnthropicOutputConfig(effort = effort)
         }
         val budget = when (reasoningEffort) {
-            "low" -> 1024
+            // Anthropic 无 minimal 档：归一到最接近的 low（避免同一档位一边 400 一边忽略的分裂）。
+            "minimal", "low" -> 1024
             "medium" -> 4096
-            "high" -> 8192
+            "high", "xhigh", "max" -> 8192
             else -> return null to null
         }
         return AnthropicThinkingConfig(type = "enabled", budget_tokens = budget) to null

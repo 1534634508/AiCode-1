@@ -35,6 +35,13 @@ class AIProviderRepositoryImpl @Inject constructor(
         private fun decodeScriptParams(raw: String): Map<String, String> =
             if (raw.isBlank()) emptyMap()
             else runCatching { json.decodeFromString<Map<String, String>>(raw) }.getOrDefault(emptyMap())
+
+        private fun encodeCustomHeaders(headers: Map<String, String>): String =
+            if (headers.isEmpty()) "" else json.encodeToString(headers)
+
+        private fun decodeCustomHeaders(raw: String): Map<String, String> =
+            if (raw.isBlank()) emptyMap()
+            else runCatching { json.decodeFromString<Map<String, String>>(raw) }.getOrDefault(emptyMap())
     }
 
     override fun getAllProviders(): Flow<List<AIProviderConfig>> {
@@ -115,7 +122,6 @@ class AIProviderRepositoryImpl @Inject constructor(
             openaiChatCacheKey = openaiChatCacheKey,
             balanceScriptPath = balanceScriptPath,
             balanceRefreshInterval = balanceRefreshInterval,
-            userAgent = userAgent,
             sortOrder = sortOrder,
             proxyEnabled = proxyEnabled,
             proxyType = runCatching { ProxyType.valueOf(proxyType) }.getOrDefault(ProxyType.HTTP),
@@ -123,6 +129,7 @@ class AIProviderRepositoryImpl @Inject constructor(
             proxyPort = proxyPort,
             proxyUsername = proxyUsername,
             proxyPassword = proxyPassword,
+            customHeaders = decodeCustomHeaders(customHeaders),
             scriptParams = decodeScriptParams(scriptParams)
         ).sanitized()
     }
@@ -149,7 +156,6 @@ class AIProviderRepositoryImpl @Inject constructor(
             openaiChatCacheKey = openaiChatCacheKey,
             balanceScriptPath = balanceScriptPath,
             balanceRefreshInterval = balanceRefreshInterval,
-            userAgent = userAgent,
             sortOrder = sortOrder,
             proxyEnabled = proxyEnabled,
             proxyType = proxyType.name,
@@ -157,6 +163,7 @@ class AIProviderRepositoryImpl @Inject constructor(
             proxyPort = proxyPort,
             proxyUsername = proxyUsername,
             proxyPassword = proxyPassword,
+            customHeaders = encodeCustomHeaders(customHeaders),
             scriptParams = encodeScriptParams(scriptParams)
         )
     }

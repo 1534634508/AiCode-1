@@ -117,8 +117,12 @@ interface AIProvider {
      */
     var logSessionId: String?
 
-    /** 自定义请求头 User-Agent；留空使用默认。 */
-    var userAgent: String
+    /**
+     * 自定义请求头（Header 名 -> 值，值可含 `{{SESSION_ID}}` / `{{API_KEY}}` 占位符）。
+     * 由 [com.aicode.feature.agent.domain.provider.resolveCustomHeaders] 替换占位符后写出，
+     * 完全覆盖该提供商请求的同名默认头。
+     */
+    var customHeaders: Map<String, String>
 
     /**
      * 本次请求允许的最大输出 token 数，来自模型元数据的输出上限（models.dev `limit.output`）。
@@ -162,6 +166,22 @@ interface AIProvider {
 
 private val VERSION_SEGMENT_REGEX = Regex("""^v\d+.*$""", RegexOption.IGNORE_CASE)
 
+/**
+ * 把提供商自定义请求头中的占位符替换为运行时值后返回最终待写出的 Header 表。
+ * 目前支持 `{{SESSION_ID}}`（当前会话 id，无会话时替换为空串）与 `{{API_KEY}}`（本次实际取用的 Key）。
+ * 空 Header 名在保存侧已被清洗，这里再防御性跳过一次。
+ */
+fun resolveCustomHeaders(
+    customHeaders: Map<String, String>,
+    sessionId: String?,
+    apiKey: String
+): Map<String, String> = customHeaders
+    .filterKeys { it.isNotBlank() }
+    .mapValues { (_, raw) ->
+        raw.replace("{{SESSION_ID}}", sessionId ?: "")
+            .replace("{{API_KEY}}", apiKey)
+    }
+
 /** 官方给出推荐采样温度、填别的值会明显掉效果的 Gemini 世代；其余 Gemini 不发温度。 */
 private val GEMINI_MODELS_WITH_SAMPLING_DEFAULTS = listOf(
     Regex("""gemini-2[.-]5([.-]|$)"""),
@@ -194,6 +214,14 @@ fun fixedTemperature(modelId: String): Float? {
  * such as "v1/chat/completions". Tolerates trailing slashes and a base URL that
  * already ends with a version segment (e.g. "https://host/v1", "https://host/api/v3", "https://host/v1beta")
  * so it isn't duplicated or conflicted with "v1/".
+ *
+ * 边界说明（规则 2 的「base 版本优先」假设）：当 base 末尾是版本段、且待拼路径也以版本段开头时，
+ * 直接丢弃路径的版本段、以 base 的版本为准。这对项目支持的全部 base 形态都是正确的——
+ * 唯一 base 末尾带版本段的内置源是智谱（`https://open.bigmodel.cn/api/paas/v4`，其真实端点是
+ * `.../v4/chat/completions`），此时把 OpenAI 默认路径的 `v1` 换成 base 的 `v4` 恰是所需。
+ * 其余内置源（OpenAI/Anthropic/Gemini/DeepSeek 等）base 均不含版本段，走末尾拼接分支。
+ * 若未来出现「base 与 path 版本段不同、且应以 path 版本为准」的源，需在此改写成
+ * 相等才去重、不等则直接拼接，而不是无条件丢弃 path 版本段。
  */
 fun joinUrl(baseUrl: String, path: String): String {
     val base = baseUrl.trim().trimEnd('/')

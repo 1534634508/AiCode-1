@@ -334,7 +334,7 @@ class ViewImageTool @Inject constructor(
         provider.useResponseApi = config.useResponseApi
         provider.providerId = config.id
         provider.logSessionId = sessionId
-        provider.userAgent = config.userAgent
+        provider.customHeaders = config.customHeaders
         val metadata = modelMetadataService.resolve(config.id, config.type, config.effectiveModel)
         provider.maxOutputTokens = metadata.outputTokens
         provider.temperature = if (metadata.supportsCustomTemperature) fixedTemperature(config.effectiveModel) else null

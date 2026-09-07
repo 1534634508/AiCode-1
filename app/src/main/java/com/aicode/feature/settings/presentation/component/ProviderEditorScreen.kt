@@ -197,7 +197,11 @@ fun ProviderEditorScreen(
         }
     }
     var balanceRefreshInterval by remember { mutableIntStateOf(initialProvider?.balanceRefreshInterval ?: 5) }
-    var userAgent by remember { mutableStateOf(initialProvider?.userAgent ?: "") }
+    val customHeaders = remember {
+        mutableStateListOf<Pair<String, String>>().apply {
+            addAll(initialProvider?.customHeaders?.toList() ?: emptyList())
+        }
+    }
     var proxyEnabled by remember { mutableStateOf(initialProvider?.proxyEnabled ?: false) }
     var proxyType by remember { mutableStateOf(initialProvider?.proxyType ?: ProxyType.HTTP) }
     var proxyHost by remember { mutableStateOf(initialProvider?.proxyHost ?: "") }
@@ -224,6 +228,8 @@ fun ProviderEditorScreen(
     var showIntervalSheet by remember { mutableStateOf(false) }
     var showProxyPage by remember { mutableStateOf(false) }
     var showKeysPage by remember { mutableStateOf(false) }
+    var showHeadersSheet by remember { mutableStateOf(false) }
+    var showScriptParamsSheet by remember { mutableStateOf(false) }
     var fetchDialogKey by remember { mutableIntStateOf(0) }
 
     // 两个 tab 的滚动状态提升到页面层，聚合出「是否正在滚动」供底部 tab栏滚动弱化（同 Git 页面）。
@@ -286,7 +292,7 @@ fun ProviderEditorScreen(
         openaiChatCacheKey = openaiChatCacheKey,
         balanceScriptPath = balanceScriptPath,
         balanceRefreshInterval = balanceRefreshInterval,
-        userAgent = userAgent,
+        customHeaders = customHeaders.filter { it.first.isNotBlank() }.toMap(),
         sortOrder = initialProvider?.sortOrder ?: -1,
         proxyEnabled = proxyEnabled,
         proxyType = proxyType,
@@ -307,6 +313,7 @@ fun ProviderEditorScreen(
             baseUrl.isNotBlank() ||
             balanceScriptPath.isNotBlank() ||
             scriptParams.any { it.first.isNotBlank() } ||
+            customHeaders.any { it.first.isNotBlank() } ||
             models.isNotEmpty()
 
     fun saveCurrent() {
@@ -389,7 +396,7 @@ fun ProviderEditorScreen(
                         )
                         if (!multiKeyEnabled) {
                             ProviderTextFieldRow(
-                                label = "API Key",
+                                label = stringResource(R.string.provider_api_key),
                                 value = apiKey,
                                 onValueChange = { apiKey = it },
                                 visualTransformation = if (apiKeyVisible) {
@@ -413,15 +420,31 @@ fun ProviderEditorScreen(
                             )
                         }
                         ProviderTextFieldRow(
-                            label = "Base URL",
+                            label = stringResource(R.string.provider_base_url),
                             value = baseUrl,
                             onValueChange = { baseUrl = it }
                         )
-                        ProviderTextFieldRow(
-                            label = stringResource(R.string.provider_user_agent),
-                            value = userAgent,
-                            onValueChange = { userAgent = it },
-                            placeholder = stringResource(R.string.provider_user_agent_hint)
+                        SettingsDivider()
+                        SettingsRow(
+                            icon = null,
+                            title = stringResource(R.string.provider_headers_title),
+                            subtitle = if (customHeaders.isEmpty()) {
+                                stringResource(R.string.provider_headers_desc)
+                            } else {
+                                stringResource(R.string.provider_headers_count, customHeaders.count { it.first.isNotBlank() })
+                            },
+                            onClick = { showHeadersSheet = true },
+                            trailing = {
+                                Text(
+                                    text = if (customHeaders.isEmpty()) {
+                                        stringResource(R.string.provider_headers_add)
+                                    } else {
+                                        stringResource(R.string.provider_headers_manage)
+                                    },
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         )
                         SettingsDivider()
                         SettingsRow(
@@ -616,7 +639,27 @@ fun ProviderEditorScreen(
                             }
                         }
                         SettingsDivider()
-                        ProviderScriptParamsEditor(scriptParams)
+                        SettingsRow(
+                            icon = null,
+                            title = stringResource(R.string.provider_script_params_title),
+                            subtitle = if (scriptParams.isEmpty()) {
+                                stringResource(R.string.provider_script_params_desc)
+                            } else {
+                                stringResource(R.string.provider_script_params_count, scriptParams.count { it.first.isNotBlank() })
+                            },
+                            onClick = { showScriptParamsSheet = true },
+                            trailing = {
+                                Text(
+                                    text = if (scriptParams.isEmpty()) {
+                                        stringResource(R.string.provider_script_param_add)
+                                    } else {
+                                        stringResource(R.string.provider_script_param_manage)
+                                    },
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        )
                         if (balanceTestState !is ProviderBalanceState.Idle) {
                             SettingsDivider()
                             BalanceTestResultBox(
@@ -847,6 +890,20 @@ fun ProviderEditorScreen(
                 showScriptPickerSheet = false
             },
             onDismiss = { showScriptPickerSheet = false }
+        )
+    }
+
+    if (showHeadersSheet) {
+        ProviderHeadersSheet(
+            headers = customHeaders,
+            onDismiss = { showHeadersSheet = false }
+        )
+    }
+
+    if (showScriptParamsSheet) {
+        ProviderScriptParamsSheet(
+            params = scriptParams,
+            onDismiss = { showScriptParamsSheet = false }
         )
     }
 
@@ -1245,11 +1302,11 @@ private fun FetchModelsDialog(
                             contentAlignment = Alignment.Center
                         ) {
                             val displayMsg = if (debugInfo != null && debugInfo.responseCode > 0) {
-                                "HTTP ${debugInfo.responseCode} · ${debugInfo.latencyMs}ms"
+                                stringResource(R.string.provider_fetch_http_error, debugInfo.responseCode, debugInfo.latencyMs)
                             } else {
                                 val codeMatch = Regex("""(?i)(HTTP\s*\d{3}|code[:\s]+[a-zA-Z0-9_]+)""").find(fetchState.message)
                                 if (codeMatch != null) codeMatch.value
-                                else fetchState.message.lines().firstOrNull()?.let { if (it.length > 28) it.take(28) + "..." else it } ?: "Error"
+                                else fetchState.message.lines().firstOrNull()?.let { if (it.length > 28) it.take(28) + "..." else it } ?: stringResource(R.string.common_error)
                             }
 
                             Row(
@@ -2290,108 +2347,357 @@ private fun IntervalSelectionSheet(
     }
 }
 
-/** 自定义面板 (DIY) 脚本参数编辑：Key-Value 列表，保存后注入为 AICODE_KEY_<KEY> 环境变量。 */
+/** 自定义请求头编辑弹窗：Header 名-值列表，发送请求时完全覆盖同名默认头，值支持 {{SESSION_ID}} / {{API_KEY}} 占位符。 */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ProviderScriptParamsEditor(
-    scriptParams: SnapshotStateList<Pair<String, String>>
+private fun ProviderHeadersSheet(
+    headers: SnapshotStateList<Pair<String, String>>,
+    onDismiss: () -> Unit
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = Spacing.lg, vertical = Spacing.sm)
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val configuration = LocalConfiguration.current
+    val screenHeight = configuration.screenHeightDp.dp
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentWindowInsets = { WindowInsets(0.dp) }
     ) {
-        Text(
-            text = stringResource(R.string.provider_script_params_title),
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurface
-        )
-        Text(
-            text = stringResource(R.string.provider_script_params_desc),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(Modifier.height(Spacing.sm))
-        if (scriptParams.isEmpty()) {
-            Text(
-                text = stringResource(R.string.provider_script_params_empty),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-            )
-        } else {
-            scriptParams.forEachIndexed { index, (k, v) ->
-                Card(
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = screenHeight * 0.88f)
+        ) {
+            // 顶部标题栏：居中标题 + 右侧关闭。
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Spacer(modifier = Modifier.size(36.dp))
+                Text(
+                    text = stringResource(R.string.provider_headers_title),
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp
                     ),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(
+                    modifier = Modifier.weight(1f),
+                    textAlign = TextAlign.Center,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                IconButton(onClick = onDismiss, modifier = Modifier.size(36.dp)) {
+                    Icon(
+                        FeatherIcons.X,
+                        contentDescription = stringResource(R.string.common_close),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            Text(
+                text = stringResource(R.string.provider_headers_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+                    .padding(bottom = 8.dp)
+            )
+
+            // 列表编辑区：可滚动，超出弹窗高度可滚动查看。
+            Column(
+                modifier = Modifier
+                    .weight(1f, fill = false)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp)
+                    .navigationBarsPadding(),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                if (headers.isEmpty()) {
+                    Text(
+                        text = stringResource(R.string.provider_headers_empty),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        AppTextField(
-                            value = k,
-                            onValueChange = { scriptParams[index] = it to v },
-                            label = stringResource(R.string.provider_script_param_key),
-                            placeholder = stringResource(R.string.provider_script_param_key_hint),
-                            singleLine = true,
+                            .padding(vertical = Spacing.md)
+                    )
+                } else {
+                    headers.forEachIndexed { index, (name, value) ->
+                        Card(
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                            ),
                             modifier = Modifier.fillMaxWidth()
-                        )
-                        AppTextField(
-                            value = v,
-                            onValueChange = { scriptParams[index] = k to it },
-                            label = stringResource(R.string.provider_script_param_value),
-                            placeholder = stringResource(R.string.provider_script_param_value_hint),
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End
                         ) {
-                            IconButton(
-                                onClick = { scriptParams.removeAt(index) },
-                                modifier = Modifier.size(32.dp)
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Icon(
-                                    FeatherIcons.Trash2,
-                                    contentDescription = stringResource(R.string.provider_script_param_remove),
-                                    tint = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.size(16.dp)
+                                AppTextField(
+                                    value = name,
+                                    onValueChange = { headers[index] = it to value },
+                                    label = stringResource(R.string.provider_headers_name),
+                                    placeholder = stringResource(R.string.provider_headers_name_hint),
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth()
                                 )
+                                AppTextField(
+                                    value = value,
+                                    onValueChange = { headers[index] = name to it },
+                                    label = stringResource(R.string.provider_headers_value),
+                                    placeholder = stringResource(R.string.provider_headers_value_hint),
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.End
+                                ) {
+                                    IconButton(
+                                        onClick = { headers.removeAt(index) },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(
+                                            FeatherIcons.Trash2,
+                                            contentDescription = stringResource(R.string.provider_headers_remove),
+                                            tint = MaterialTheme.colorScheme.error,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
                 }
+                Spacer(Modifier.height(Spacing.xs))
+            }
+
+            // 底部：添加一行 + 完成按钮。
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+                    .padding(bottom = Spacing.xl)
+                    .navigationBarsPadding(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Surface(
+                    onClick = { headers.add("" to "") },
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(vertical = 10.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            FeatherIcons.Plus,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(Modifier.width(Spacing.xs))
+                        Text(
+                            text = stringResource(R.string.provider_headers_add),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+                Button(
+                    onClick = onDismiss,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(stringResource(R.string.common_done))
+                }
             }
         }
-        Spacer(Modifier.height(Spacing.xs))
-        Surface(
-            onClick = { scriptParams.add("" to "") },
-            shape = RoundedCornerShape(10.dp),
-            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
-            modifier = Modifier.fillMaxWidth()
+    }
+}
+
+/** 自定义面板 (DIY) 脚本参数编辑弹窗：Key-Value 列表，保存后注入为 AICODE_KEY_<KEY> 环境变量。 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ProviderScriptParamsSheet(
+    params: SnapshotStateList<Pair<String, String>>,
+    onDismiss: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val configuration = LocalConfiguration.current
+    val screenHeight = configuration.screenHeightDp.dp
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentWindowInsets = { WindowInsets(0.dp) }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = screenHeight * 0.88f)
         ) {
+            // 顶部标题栏：居中标题 + 右侧关闭。
             Row(
-                modifier = Modifier.padding(vertical = 10.dp),
-                horizontalArrangement = Arrangement.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    FeatherIcons.Plus,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(Modifier.width(Spacing.xs))
+                Spacer(modifier = Modifier.size(36.dp))
                 Text(
-                    text = stringResource(R.string.provider_script_param_add),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.primary
+                    text = stringResource(R.string.provider_script_params_title),
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp
+                    ),
+                    modifier = Modifier.weight(1f),
+                    textAlign = TextAlign.Center,
+                    color = MaterialTheme.colorScheme.onSurface
                 )
+                IconButton(onClick = onDismiss, modifier = Modifier.size(36.dp)) {
+                    Icon(
+                        FeatherIcons.X,
+                        contentDescription = stringResource(R.string.common_close),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            Text(
+                text = stringResource(R.string.provider_script_params_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+                    .padding(bottom = 8.dp)
+            )
+
+            // 列表编辑区：可滚动，超出弹窗高度可滚动查看。
+            Column(
+                modifier = Modifier
+                    .weight(1f, fill = false)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp)
+                    .navigationBarsPadding(),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                if (params.isEmpty()) {
+                    Text(
+                        text = stringResource(R.string.provider_script_params_empty),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = Spacing.md)
+                    )
+                } else {
+                    params.forEachIndexed { index, (k, v) ->
+                        Card(
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                AppTextField(
+                                    value = k,
+                                    onValueChange = { params[index] = it to v },
+                                    label = stringResource(R.string.provider_script_param_key),
+                                    placeholder = stringResource(R.string.provider_script_param_key_hint),
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                AppTextField(
+                                    value = v,
+                                    onValueChange = { params[index] = k to it },
+                                    label = stringResource(R.string.provider_script_param_value),
+                                    placeholder = stringResource(R.string.provider_script_param_value_hint),
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.End
+                                ) {
+                                    IconButton(
+                                        onClick = { params.removeAt(index) },
+                                        modifier = Modifier.size(32.dp)
+                                    ) {
+                                        Icon(
+                                            FeatherIcons.Trash2,
+                                            contentDescription = stringResource(R.string.provider_script_param_remove),
+                                            tint = MaterialTheme.colorScheme.error,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(Spacing.xs))
+            }
+
+            // 底部：添加一行 + 完成按钮。
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+                    .padding(bottom = Spacing.xl)
+                    .navigationBarsPadding(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Surface(
+                    onClick = { params.add("" to "") },
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(vertical = 10.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            FeatherIcons.Plus,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(Modifier.width(Spacing.xs))
+                        Text(
+                            text = stringResource(R.string.provider_script_param_add),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+                Button(
+                    onClick = onDismiss,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(44.dp),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(stringResource(R.string.common_done))
+                }
             }
         }
     }

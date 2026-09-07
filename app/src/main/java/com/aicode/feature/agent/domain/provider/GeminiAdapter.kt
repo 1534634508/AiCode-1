@@ -34,8 +34,8 @@ class GeminiAdapter @Inject constructor(
     override var providerId = ""
     override var logSessionId: String? = null
 
-    /** 自定义请求头 User-Agent；留空使用默认。 */
-    override var userAgent: String = ""
+    /** 自定义请求头：占位符替换后写出，完全覆盖同名默认头。 */
+    override var customHeaders: Map<String, String> = emptyMap()
 
     // Gemini 发 generationConfig.maxOutputTokens（模型元数据的输出上限）；为 null 时不发该参数，用服务端默认。
     override var maxOutputTokens: Int? = null
@@ -44,7 +44,7 @@ class GeminiAdapter @Inject constructor(
     override var temperature: Float? = null
 
     private fun extraHeaders(): Map<String, String> =
-        if (userAgent.isNotBlank()) mapOf("User-Agent" to userAgent) else emptyMap()
+        resolveCustomHeaders(customHeaders, logSessionId, apiKey)
 
     /**
      * Interactions API 的目标端点。与 generateContent 的两点不同：
@@ -98,30 +98,44 @@ class GeminiAdapter @Inject constructor(
         var finishReason: String? = null
         var partsSnapshot: String? = null
 
-        val candidates = response.getAsJsonArray("candidates")
-        candidates?.firstOrNull()?.asJsonObject?.let { candidate ->
-            finishReason = candidate.get("finishReason")?.asString
-            val content = candidate.getAsJsonObject("content")
-            val parts = content?.getAsJsonArray("parts")
-            parts?.forEach { partEl ->
-                val part = partEl.asJsonObject
-                val isThought = part.get("thought")?.asBoolean == true
-                if (part.has("text")) {
-                    val text = part.get("text").asString
-                    if (isThought) thinkingText += text else contentText += text
+        // 非流式响应的字段类型偶有出入（内容安全拦截时 candidates 缺失或为空、finishReason/text 可能为
+        // JSON null），Gson 的 getAsJsonArray/getAsJsonObject/asString 对这些情况会直接抛异常。
+        // 与流式路径（:208-218）对齐：每个字段用 takeIf { !it.isJsonNull } 守卫，整段 runCatching 兜底，
+        // 坏响应返回带 stopReason 的明确结果交由上层处理，而非把解析异常抛给用户。
+        val parseFailure = runCatching {
+            val candidates = response.get("candidates")?.takeIf { it.isJsonArray }?.asJsonArray
+            candidates?.firstOrNull()?.takeIf { it.isJsonObject }?.asJsonObject?.let { candidate ->
+                finishReason = candidate.get("finishReason")?.takeIf { !it.isJsonNull }?.asString
+                val content = candidate.get("content")?.takeIf { it.isJsonObject }?.asJsonObject
+                val parts = content?.get("parts")?.takeIf { it.isJsonArray }?.asJsonArray
+                parts?.forEach { partEl ->
+                    val part = partEl.asJsonObject
+                    val isThought = part.get("thought")?.takeIf { !it.isJsonNull }?.asBoolean == true
+                    if (part.has("text")) {
+                        val text = part.get("text")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                        if (isThought) thinkingText += text else contentText += text
+                    }
+                    if (part.has("functionCall")) {
+                        val fnCall = part.get("functionCall")?.takeIf { it.isJsonObject }?.asJsonObject
+                        val name = fnCall?.get("name")?.takeIf { !it.isJsonNull }?.asString ?: ""
+                        // 并行调用时服务端会给 id；缺失才退回用函数名（同名工具调两次会撞 id）。
+                        val callId = fnCall?.get("id")?.takeIf { !it.isJsonNull }?.asString?.takeIf { it.isNotBlank() } ?: name
+                        val argsStr = fnCall?.get("args")?.takeIf { it.isJsonObject }?.asJsonObject?.toString() ?: "{}"
+                        val argsJson = parseArgs(argsStr)
+                        toolCalls.add(ToolCall(id = callId, name = name, arguments = argsJson))
+                    }
                 }
-                if (part.has("functionCall")) {
-                    val fnCall = part.getAsJsonObject("functionCall")
-                    val name = fnCall.get("name")?.asString ?: ""
-                    // 并行调用时服务端会给 id；缺失才退回用函数名（同名工具调两次会撞 id）。
-                    val callId = fnCall.get("id")?.takeIf { !it.isJsonNull }?.asString?.takeIf { it.isNotBlank() } ?: name
-                    val argsStr = fnCall.getAsJsonObject("args")?.toString() ?: "{}"
-                    val argsJson = parseArgs(argsStr)
-                    toolCalls.add(ToolCall(id = callId, name = name, arguments = argsJson))
-                }
+                partsSnapshot = snapshotOf(parts)
             }
-            partsSnapshot = snapshotOf(parts)
-        }
+
+            // 内容安全拦截：candidates 为空但 promptFeedback 给出 blockReason（SAFETY / PROHIBITED_CONTENT
+            // 等），把它作为 stopReason 上抛，上层据此按「中止」展示原因，而不是静默返回空白正文。
+            if (finishReason == null && (candidates == null || candidates.size() == 0)) {
+                response.get("promptFeedback")?.takeIf { it.isJsonObject }?.asJsonObject
+                    ?.get("blockReason")?.takeIf { !it.isJsonNull }?.asString
+                    ?.let { finishReason = it }
+            }
+        }.exceptionOrNull()
 
         val usageMetadata = response.get("usageMetadata")?.takeIf { it.isJsonObject }?.asJsonObject
         val inputTokens = usageMetadata?.get("promptTokenCount")?.takeIf { !it.isJsonNull }?.asInt ?: 0
@@ -130,7 +144,20 @@ class GeminiAdapter @Inject constructor(
             (usageMetadata?.get("thoughtsTokenCount")?.takeIf { !it.isJsonNull }?.asInt ?: 0)
         val cachedInputTokens = usageMetadata?.get("cachedContentTokenCount")?.takeIf { !it.isJsonNull }?.asInt ?: 0
 
-        return AIResponse(content = contentText, toolCalls = toolCalls, stopReason = finishReason, reasoning = thinkingText.ifEmpty { null }, thinkingBlocksJson = partsSnapshot, inputTokens = inputTokens, outputTokens = outputTokens, cachedInputTokens = cachedInputTokens)
+        // 响应结构损坏（解析过程抛异常）且没有可展示的正文/原因：返回明确的中止结果而非崩溃，
+        // stopReason=failed 命中 isAborted，上层会展示错误文案。
+        val aborted = parseFailure != null && finishReason == null
+        return AIResponse(
+            content = contentText,
+            toolCalls = toolCalls,
+            stopReason = if (aborted) "failed" else finishReason,
+            stopDetail = if (aborted) parseFailure?.message ?: "Gemini 响应解析失败" else null,
+            reasoning = thinkingText.ifEmpty { null },
+            thinkingBlocksJson = partsSnapshot,
+            inputTokens = inputTokens,
+            outputTokens = outputTokens,
+            cachedInputTokens = cachedInputTokens
+        )
     }
 
     override fun completeStream(
@@ -309,9 +336,9 @@ class GeminiAdapter @Inject constructor(
         return request
     }
 
-    /** 思考强度 → `thinking_level`，仅支持 minimal/low/medium/high；xhigh/max 归一到 high。 */
+    /** 思考强度 → `thinking_level`，仅支持 minimal/low/medium/high；none 跳过（不发 thinking），xhigh/max 归一到 high。 */
     private fun interactionsThinkingLevel(reasoningEffort: String?): String? = when (reasoningEffort) {
-        null -> null
+        null, "none" -> null
         "xhigh", "max" -> "high"
         else -> reasoningEffort
     }
@@ -552,8 +579,12 @@ class GeminiAdapter @Inject constructor(
     private fun buildThinkingConfig(reasoningEffort: String?): Map<String, Any>? {
         if (reasoningEffort == null) return null
         return if (model.contains("gemini-3")) {
-            // thinkingLevel 仅支持 minimal/low/medium/high；xhigh/max 归一到 high（元数据未命中时 UI 会给出全部档位）
-            val level = if (reasoningEffort == "xhigh" || reasoningEffort == "max") "high" else reasoningEffort
+            // thinkingLevel 仅支持 minimal/low/medium/high；none 跳过（不发 thinking），xhigh/max 归一到 high（元数据未命中时 UI 会给出全部档位）
+            val level = when (reasoningEffort) {
+                "none" -> return null
+                "xhigh", "max" -> "high"
+                else -> reasoningEffort
+            }
             mapOf("thinkingLevel" to level, "includeThoughts" to true)
         } else {
             val budget = when (reasoningEffort) {

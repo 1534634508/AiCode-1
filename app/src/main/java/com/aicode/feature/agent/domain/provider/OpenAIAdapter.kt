@@ -49,8 +49,8 @@ class OpenAIAdapter @Inject constructor(
      */
     var chatCacheKeyEnabled: Boolean = false
 
-    /** 自定义请求头 User-Agent；留空使用默认。 */
-    override var userAgent: String = ""
+    /** 自定义请求头：占位符替换后写出，完全覆盖同名默认头。 */
+    override var customHeaders: Map<String, String> = emptyMap()
 
     // OpenAI 系不发输出上限参数（用服务端默认），仅为接口完整性保留。
     override var maxOutputTokens: Int? = null
@@ -59,7 +59,7 @@ class OpenAIAdapter @Inject constructor(
     override var temperature: Float? = null
 
     private fun extraHeaders(): Map<String, String> =
-        if (userAgent.isNotBlank()) mapOf("User-Agent" to userAgent) else emptyMap()
+        resolveCustomHeaders(customHeaders, logSessionId, apiKey)
 
     /**
      * 目标端点：Responses API 开启时用 `v1/responses`，否则用 chat/completions 路径（[defaultProviderApiPath]）。
@@ -102,7 +102,7 @@ class OpenAIAdapter @Inject constructor(
             model = model,
             messages = openAIMessages,
             temperature = temperature,
-            reasoning_effort = reasoningEffort,
+            reasoning_effort = normalizeReasoningEffort(reasoningEffort),
             tools = toolDefs,
             tool_choice = if (toolDefs != null) "auto" else null,
             stream = false,
@@ -134,9 +134,31 @@ class OpenAIAdapter @Inject constructor(
         return AIResponse(content = content, toolCalls = toolCalls, stopReason = finishReason, reasoning = reasoning, inputTokens = usage?.prompt_tokens ?: 0, outputTokens = usage?.completion_tokens ?: 0, cachedInputTokens = usage?.prompt_tokens_details?.cached_tokens ?: 0)
     }
 
-    /** o 系列推理模型不接受 system role，要求改用 developer。 */
-    private fun systemRoleForModel(): String =
-        if (model.startsWith("o1") || model.startsWith("o3")) "developer" else "system"
+    /**
+     * o 系列推理模型不接受 system role，要求改用 developer。
+     * 按前缀判定：o1/o3/o4 及后续 o 系列（o5、o6…），以及 gpt-5 系（官方归入同一「推理模型」角色约定），
+     * 一律用 developer。gpt-4 及更早、以及第三方兼容服务（deepseek/kimi/minimax/moonshot 等）不命中
+     * 前缀，继续走 system，不受影响。
+     */
+    private fun systemRoleForModel(): String = when {
+        model.startsWith("o", ignoreCase = true) -> "developer"
+        model.startsWith("gpt-5", ignoreCase = true) -> "developer"
+        else -> "system"
+    }
+
+    /**
+     * 思考强度 → OpenAI reasoning_effort。
+     * OpenAI 官方 Chat Completions 的 reasoning_effort 仅接受 low/medium/high（gpt-5 系额外支持
+     * none/minimal，但 o 系列不接受），"none"/"minimal" 原样透传会在多数推理模型上 400。
+     * 这里把 "none"/"minimal" 明确跳过（不发该字段，交由服务端默认），"xhigh"/"max" 归一到 high
+     * （OpenAI 无更高档），low/medium/high 原样透传。与 Anthropic/Gemini 对齐「不可表达即跳过」的策略。
+     */
+    private fun normalizeReasoningEffort(effort: String?): String? = when (effort) {
+        null -> null
+        "none", "minimal" -> null
+        "xhigh", "max" -> "high"
+        else -> effort
+    }
 
     /**
      * Responses 请求体。system prompt 作为首个 message item 进 `input`（与顶层 `instructions` 等价，
@@ -166,7 +188,7 @@ class OpenAIAdapter @Inject constructor(
             request["tool_choice"] = "auto"
         }
         if (stream) request["stream"] = true
-        reasoningEffort?.let { effort ->
+        normalizeReasoningEffort(reasoningEffort)?.let { effort ->
             if (isDeepSeek) {
                 request["reasoning"] = mapOf("effort" to effort)
             } else {
@@ -260,7 +282,7 @@ class OpenAIAdapter @Inject constructor(
             model = model,
             messages = openAIMessages,
             temperature = temperature,
-            reasoning_effort = reasoningEffort,
+            reasoning_effort = normalizeReasoningEffort(reasoningEffort),
             tools = toolDefs,
             tool_choice = if (toolDefs != null) "auto" else null,
             stream = true,

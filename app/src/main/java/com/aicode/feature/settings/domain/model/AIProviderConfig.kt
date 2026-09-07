@@ -32,8 +32,12 @@ data class AIProviderConfig(
     val balanceScriptPath: String = "",
     /** 套餐余量自动刷新间隔（分钟），0 表示仅进入时/手动刷新，支持 1, 3, 5, 10 等。默认 5 分钟。 */
     val balanceRefreshInterval: Int = 5,
-    /** 自定义请求头 User-Agent；留空使用默认。 */
-    val userAgent: String = "",
+    /**
+     * 自定义请求头（Header 名 -> 值），完全覆盖该提供商所有请求的同名默认头。
+     * 值支持占位符 `{{SESSION_ID}}`（会话 id）与 `{{API_KEY}}`（本次实际取用的 Key），
+     * 发送请求前由 provider 适配器替换后写出。
+     */
+    val customHeaders: Map<String, String> = emptyMap(),
     /** 提供商列表排序序号，越小越靠前；-1 表示未分配（保存时取 max+1 排到末尾）。 */
     val sortOrder: Int = -1,
     /** 单独为该提供商配置代理（关闭时跟随全局代理设置）。 */
@@ -93,7 +97,10 @@ fun AIProviderConfig.sanitized(): AIProviderConfig = copy(
     models = models.map { it.stripLineBreaks() }.filter { it.isNotEmpty() }.distinct(),
     selectedModel = selectedModel.stripLineBreaks(),
     balanceScriptPath = balanceScriptPath.stripLineBreaks(),
-    userAgent = userAgent.stripLineBreaks(),
+    customHeaders = customHeaders
+        .mapKeys { (k, _) -> k.trim() }
+        .mapValues { (_, v) -> v.stripLineBreaks() }
+        .filterKeys { it.isNotEmpty() },
     proxyHost = proxyHost.stripAllWhitespace(),
     proxyUsername = proxyUsername.stripLineBreaks(),
     proxyPassword = proxyPassword.stripLineBreaks(),

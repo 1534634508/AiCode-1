@@ -441,7 +441,7 @@ class SettingsViewModel @Inject constructor(
     private val _backgroundImagePath = MutableStateFlow<String?>(null)
     val backgroundImagePath: StateFlow<String?> = _backgroundImagePath.asStateFlow()
 
-    /** 背景图不透明度（0.05~1.0），实时写 DataStore，全局背景同步变化。 */
+    /** 背景图不透明度（0~0.2，实际范围由 BackgroundSettingsRepository 的 MIN/MAX 决定），实时写 DataStore，全局背景同步变化。 */
     private val _backgroundAlpha = MutableStateFlow(BackgroundSettingsRepository.DEFAULT_ALPHA)
     val backgroundAlpha: StateFlow<Float> = _backgroundAlpha.asStateFlow()
 
@@ -1227,7 +1227,7 @@ class SettingsViewModel @Inject constructor(
     }
 
     /**
-     * 调节背景图透明度（0.05~1.0）。
+     * 调节背景图透明度（0~0.2，实际范围由 BackgroundSettingsRepository 的 MIN_ALPHA/MAX_ALPHA 决定）。
      *
      * 滑块拖动会连续打进数十个值，DataStore 的写是串行的，逐个落盘会积压出肉眼可见的延迟，
      * 回读又会把整个设置页带着重组。此处只保留最后一个值，停手约 80ms 后写一次。
@@ -1632,7 +1632,7 @@ class SettingsViewModel @Inject constructor(
     fun fetchModels(provider: AIProviderConfig) {
         viewModelScope.launch {
             _fetchState.value = FetchState.Loading
-            modelApiService.fetchModels(provider.baseUrl, provider.firstUsableApiKey, provider.type, provider.useFullUrl, provider.userAgent)
+            modelApiService.fetchModels(provider.baseUrl, provider.firstUsableApiKey, provider.type, provider.useFullUrl, provider.customHeaders)
                 .onSuccess { result ->
                     _fetchState.value = FetchState.Success(result.models, result.debugInfo)
                     resolveModelMetadata(provider.id, provider.type, result.models)
@@ -1690,7 +1690,7 @@ class SettingsViewModel @Inject constructor(
     fun testModel(provider: AIProviderConfig, model: String) {
         viewModelScope.launch {
             _testing.update { it + model }
-            val result = modelApiService.testModel(provider.baseUrl, provider.firstUsableApiKey, provider.type, provider.useFullUrl, provider.useResponseApi, model, provider.userAgent)
+            val result = modelApiService.testModel(provider.baseUrl, provider.firstUsableApiKey, provider.type, provider.useFullUrl, provider.useResponseApi, model, provider.customHeaders)
             _testResults.update { it + (model to result) }
             _testing.update { it - model }
         }
