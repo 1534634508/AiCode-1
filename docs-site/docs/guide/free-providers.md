@@ -32,6 +32,16 @@
 新用户需先注册并完成实名认证，方可获得赠送额度。
 :::
 
+## Agnes AI
+
+- **平台**：Agnes AI（新加坡 Sapiens AI 团队）
+- **注册地址**：[platform.agnes-ai.com](https://platform.agnes-ai.com/)
+- **说明**：全模态 AI 平台，文本、图像、视频三大模型 API 无限期免费开放，OpenAI 兼容接口，注册后即可申请 API Key 接入。
+
+::: tip 全模态免费
+文本、图像、视频模型 API 均免费开放，免费访问有基础速率限制与公平使用配额，具体以平台规则为准。
+:::
+
 ## 在 AiCode 中接入
 
 拿到平台的 API Key 和 Base URL 后，按 [AI 提供商与模型](/guide/providers) 的步骤配置即可：
