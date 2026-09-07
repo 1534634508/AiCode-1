@@ -14,9 +14,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -302,18 +305,24 @@ internal fun StatusTab(
                                 onLongClick = { actionSheet = untrackedDirMenu(path) },
                                 onStage = { onStage(path) }
                             )
-                            children?.forEach { child ->
-                                SettingsDivider()
-                                FileRow(
-                                    file = GitFileChange(child, "?", staged = false),
-                                    actionIcon = FeatherIcons.Plus,
-                                    actionDesc = stringResource(R.string.git_stage),
-                                    onAction = { onStage(child) },
-                                    enabled = !busy,
-                                    indent = Spacing.lg,
-                                    onClick = { onUntrackedDiff(child) },
-                                    onLongClick = { actionSheet = untrackedFileMenu(child) }
-                                )
+                            // 未跟踪目录可能含上千个文件：全量 forEach 会在主线程一次性组合所有行
+                            // 把 UI 卡死；改用受限高度的 LazyColumn 惰性渲染，超长时在列表内滚动。
+                            if (children != null) {
+                                LazyColumn(modifier = Modifier.heightIn(max = 360.dp)) {
+                                    items(children, key = { it }) { child ->
+                                        SettingsDivider()
+                                        FileRow(
+                                            file = GitFileChange(child, "?", staged = false),
+                                            actionIcon = FeatherIcons.Plus,
+                                            actionDesc = stringResource(R.string.git_stage),
+                                            onAction = { onStage(child) },
+                                            enabled = !busy,
+                                            indent = Spacing.lg,
+                                            onClick = { onUntrackedDiff(child) },
+                                            onLongClick = { actionSheet = untrackedFileMenu(child) }
+                                        )
+                                    }
+                                }
                             }
                         } else {
                             FileRow(
