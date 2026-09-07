@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -15,6 +16,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -112,8 +114,11 @@ internal fun SubAgentDetailSection(
                 text = entry.prompt.ifBlank { stringResource(R.string.mcp_no_description) },
                 color = MaterialTheme.colorScheme.onSurface,
                 cache = cache,
+                lazyScroll = true,
                 modifier = Modifier
                     .fillMaxWidth()
+                    // 正文卡限高：长文本在卡内懒加载滚动（外层整页仍可继续滚），避免超大 md 全量渲染卡顿。
+                    .heightIn(max = LocalConfiguration.current.screenHeightDp.dp * 0.62f)
                     .padding(horizontal = Spacing.lg, vertical = 12.dp)
             )
         }
