@@ -1,6 +1,7 @@
 package com.aicode.feature.workspace.domain
 
 import java.io.File
+import java.nio.charset.Charset
 
 /** 目录条目信息，供 [FileAccessProvider.listFiles] 返回。 */
 data class FileEntry(
@@ -42,8 +43,12 @@ interface FileAccessProvider {
      */
     fun readLines(path: String): Sequence<String>
 
-    /** 写入文件全文。父目录不存在则自动创建。[overwrite] 为 false 且文件已存在时抛 [FileAlreadyExistsException]。 */
-    fun writeFile(path: String, content: String, overwrite: Boolean = true)
+    /**
+     * 写入文件全文。父目录不存在则自动创建。[overwrite] 为 false 且文件已存在时抛 [FileAlreadyExistsException]。
+     * [encoding] 指定落盘字符编码；缺省 UTF-8。调用方应把「读入时检测到的编码」原样回传，
+     * 避免 GBK 等非 UTF-8 文件在保存时被静默转码破坏。
+     */
+    fun writeFile(path: String, content: String, overwrite: Boolean = true, encoding: Charset = Charsets.UTF_8)
 
     /** 文件是否存在。 */
     fun exists(path: String): Boolean
@@ -94,6 +99,21 @@ interface FileAccessProvider {
      * [path] 不存在时抛 [NoSuchFileException]，其它失败抛 [java.io.IOException]。
      */
     fun rename(path: String, newPath: String)
+
+    /**
+     * 复制文件或目录（含子内容）到 [newPath]。[path] 不存在时抛 [NoSuchFileException]，
+     * 其它失败抛 [java.io.IOException]。[overwrite] 为 false 且 [newPath] 已存在时抛
+     * [FileAlreadyExistsException]；为 true 时覆盖。
+     */
+    fun copy(path: String, newPath: String, overwrite: Boolean = false)
+
+    /**
+     * 将 [path] 移动（剪切）到 [newPath]。[path] 不存在时抛 [NoSuchFileException]，
+     * 其它失败抛 [java.io.IOException]。[overwrite] 为 false 且 [newPath] 已存在时抛
+     * [FileAlreadyExistsException]；为 true 时覆盖。
+     * 实现可用 rename 或「复制 + 删除源」。
+     */
+    fun move(path: String, newPath: String, overwrite: Boolean = false)
 
     /** 创建目录（含父目录）。 */
     fun mkdirs(path: String)

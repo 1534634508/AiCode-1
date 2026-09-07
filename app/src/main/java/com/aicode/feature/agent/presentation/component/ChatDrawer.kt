@@ -29,6 +29,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -73,12 +74,15 @@ import com.aicode.feature.settings.presentation.component.SettingsRow
 import com.aicode.feature.settings.presentation.component.settingsPageBackground
 import com.aicode.feature.agent.domain.model.ChatSession
 import com.aicode.feature.agent.presentation.AgentUIState
+import com.aicode.feature.agent.presentation.BrowseClipboard
 import com.aicode.feature.agent.presentation.FileBrowseState
 import com.aicode.feature.agent.presentation.FileTreeNode
 import com.aicode.feature.workspace.domain.isValidFileEntryName
 import compose.icons.FeatherIcons
 import compose.icons.feathericons.ChevronDown
 import compose.icons.feathericons.ChevronRight
+import compose.icons.feathericons.Clipboard
+import compose.icons.feathericons.Copy
 import compose.icons.feathericons.Download
 import compose.icons.feathericons.Edit2
 import compose.icons.feathericons.FilePlus
@@ -116,6 +120,8 @@ fun ChatDrawerContent(
     subSessionsByParent: Map<String, List<ChatSession>> = emptyMap(),
     browseState: FileBrowseState,
     expandedPaths: Set<String>,
+    clipboard: BrowseClipboard? = null,
+    pasteConflict: Pair<String, String>? = null,
     onToggleExpand: (String) -> Unit,
     onOpenFile: (String) -> Unit,
     onRefreshBrowse: () -> Unit,
@@ -123,6 +129,12 @@ fun ChatDrawerContent(
     onCreateFolder: (String, String) -> Unit,
     onRenameEntry: (String, String) -> Unit,
     onDeleteEntry: (String) -> Unit,
+    onCopyEntry: (String, String) -> Unit,
+    onCutEntry: (String, String) -> Unit,
+    onPasteEntry: (String, (Boolean) -> Unit) -> Unit,
+    onPasteOverwrite: () -> Unit,
+    onCancelPasteOverwrite: () -> Unit,
+    onClearClipboard: () -> Unit,
     onNavigateToSettings: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -180,13 +192,18 @@ fun ChatDrawerContent(
                 1 -> FileBrowserTab(
                     state = browseState,
                     expandedPaths = expandedPaths,
+                    clipboard = clipboard,
                     onToggleExpand = onToggleExpand,
                     onOpenFile = onOpenFile,
                     onRefresh = onRefreshBrowse,
                     onCreateFile = onCreateFile,
                     onCreateFolder = onCreateFolder,
                     onRenameEntry = onRenameEntry,
-                    onDeleteEntry = onDeleteEntry
+                    onDeleteEntry = onDeleteEntry,
+                    onCopyEntry = onCopyEntry,
+                    onCutEntry = onCutEntry,
+                    onPasteEntry = onPasteEntry,
+                    onClearClipboard = onClearClipboard
                 )
             }
         }
@@ -198,6 +215,27 @@ fun ChatDrawerContent(
                 onClick = onNavigateToSettings
             )
         }
+    }
+
+    pasteConflict?.let { (_, targetPath) ->
+        AlertDialog(
+            onDismissRequest = onCancelPasteOverwrite,
+            title = { Text(stringResource(R.string.file_browser_paste_conflict_title)) },
+            text = {
+                Text(
+                    stringResource(
+                        R.string.file_browser_paste_conflict_message,
+                        targetPath.substringAfterLast('/')
+                    )
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = onPasteOverwrite) { Text(stringResource(R.string.common_overwrite)) }
+            },
+            dismissButton = {
+                TextButton(onClick = onCancelPasteOverwrite) { Text(stringResource(R.string.common_cancel)) }
+            }
+        )
     }
 
     pendingDelete?.let { session ->
@@ -423,13 +461,18 @@ private fun SubAgentExpandToggle(
 private fun FileBrowserTab(
     state: FileBrowseState,
     expandedPaths: Set<String>,
+    clipboard: BrowseClipboard?,
     onToggleExpand: (String) -> Unit,
     onOpenFile: (String) -> Unit,
     onRefresh: () -> Unit,
     onCreateFile: (String, String) -> Unit,
     onCreateFolder: (String, String) -> Unit,
     onRenameEntry: (String, String) -> Unit,
-    onDeleteEntry: (String) -> Unit
+    onDeleteEntry: (String) -> Unit,
+    onCopyEntry: (String, String) -> Unit,
+    onCutEntry: (String, String) -> Unit,
+    onPasteEntry: (String, (Boolean) -> Unit) -> Unit,
+    onClearClipboard: () -> Unit
 ) {
     var creating by remember { mutableStateOf<CreateTarget?>(null) }
     var menuNode by remember { mutableStateOf<FileTreeNode?>(null) }
@@ -504,20 +547,31 @@ private fun FileBrowserTab(
             }
         }
 
-        // 刷新按钮固定在面板右上角，不随树的横向滚动而移动。
-        IconButton(
-            onClick = onRefresh,
+        // 右上角操作排：剪贴板指示器（有背景、有边框，与无背景的刷新图标区分）+ 刷新按钮。
+        Row(
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .padding(Spacing.xs)
-                .size(32.dp)
+                .padding(Spacing.xs),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                imageVector = FeatherIcons.RefreshCw,
-                contentDescription = stringResource(R.string.file_browser_refresh),
-                modifier = Modifier.size(16.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            clipboard?.let { clip ->
+                ClipboardIndicator(
+                    clipboard = clip,
+                    onClear = onClearClipboard,
+                    modifier = Modifier.padding(end = Spacing.xs)
+                )
+            }
+            IconButton(
+                onClick = onRefresh,
+                modifier = Modifier.size(32.dp)
+            ) {
+                Icon(
+                    imageVector = FeatherIcons.RefreshCw,
+                    contentDescription = stringResource(R.string.file_browser_refresh),
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
     }
 
@@ -541,6 +595,7 @@ private fun FileBrowserTab(
     menuNode?.let { node ->
         FileTreeActionSheet(
             node = node,
+            clipboard = clipboard,
             onNewFile = {
                 menuNode = null
                 if (!node.isRoot && node.path !in expandedPaths) onToggleExpand(node.path)
@@ -558,6 +613,19 @@ private fun FileBrowserTab(
             onDelete = {
                 menuNode = null
                 pendingDelete = node
+            },
+            onCopy = {
+                menuNode = null
+                onCopyEntry(node.path, node.entry.name)
+            },
+            onCut = {
+                menuNode = null
+                onCutEntry(node.path, node.entry.name)
+            },
+            onPasteHere = {
+                val target = node.path
+                menuNode = null
+                onPasteEntry(target) { /* 结果由调用方决定是否提示，这里保持静默 */ }
             },
             onDismiss = { menuNode = null }
         )
@@ -646,15 +714,43 @@ private fun FileNameInputDialog(
     )
 }
 
-/** 文件树节点长按弹出的功能菜单：目录（含工作区根）可新建，非根节点可重命名/删除。 */
+/** 剪切板指示器：右上角刷新按钮旁的主题色图标，显示复制/剪切状态，点击清空。 */
+@Composable
+private fun ClipboardIndicator(
+    clipboard: BrowseClipboard,
+    onClear: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    IconButton(
+        onClick = onClear,
+        modifier = modifier.size(32.dp)
+    ) {
+        Icon(
+            imageVector = if (clipboard.isCut) Icons.Filled.ContentCut else FeatherIcons.Copy,
+            contentDescription = stringResource(
+                if (clipboard.isCut) R.string.file_browser_clipboard_cut
+                else R.string.file_browser_clipboard_copy
+            ),
+            modifier = Modifier.size(16.dp),
+            tint = MaterialTheme.colorScheme.primary
+        )
+    }
+}
+
+/** 文件树节点长按弹出的功能菜单：目录（含工作区根）可新建，非根节点可复制/剪切/重命名/删除，
+ * 剪切板非空时目录可「粘贴到此处」。 */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun FileTreeActionSheet(
     node: FileTreeNode,
+    clipboard: BrowseClipboard?,
     onNewFile: () -> Unit,
     onNewFolder: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
+    onCopy: () -> Unit,
+    onCut: () -> Unit,
+    onPasteHere: () -> Unit,
     onDismiss: () -> Unit
 ) {
     ModalBottomSheet(
@@ -677,6 +773,15 @@ private fun FileTreeActionSheet(
                     .padding(horizontal = Spacing.lg)
                     .padding(bottom = Spacing.md)
             )
+            // 剪切板非空且当前节点是目录 / 根：优先提供「粘贴到此处」。
+            if (clipboard != null && node.entry.isDirectory) {
+                SheetActionRow(
+                    icon = FeatherIcons.Clipboard,
+                    label = stringResource(R.string.file_browser_paste_here),
+                    tint = MaterialTheme.colorScheme.primary,
+                    onClick = onPasteHere
+                )
+            }
             if (node.entry.isDirectory) {
                 SheetActionRow(
                     icon = FeatherIcons.FilePlus,
@@ -692,6 +797,18 @@ private fun FileTreeActionSheet(
                 )
             }
             if (!node.isRoot) {
+                SheetActionRow(
+                    icon = FeatherIcons.Copy,
+                    label = stringResource(R.string.common_copy),
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    onClick = onCopy
+                )
+                SheetActionRow(
+                    icon = Icons.Filled.ContentCut,
+                    label = stringResource(R.string.common_cut),
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    onClick = onCut
+                )
                 SheetActionRow(
                     icon = FeatherIcons.Edit2,
                     label = stringResource(R.string.common_rename),

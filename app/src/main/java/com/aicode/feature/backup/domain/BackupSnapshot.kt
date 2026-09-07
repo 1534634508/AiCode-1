@@ -124,7 +124,9 @@ data class ProviderDto(
     val apiKeys: String? = null,
     val keyRotationStrategy: String? = null,
     val keyFailoverThreshold: Int? = null,
-    val keyCooldownMinutes: Int? = null
+    val keyCooldownMinutes: Int? = null,
+    /** 自定义面板 (DIY) 脚本参数（JSON 编码）；null 表示旧备份无此字段，导入时回退为空。 */
+    val scriptParams: String? = null
 )
 
 @Serializable

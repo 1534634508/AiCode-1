@@ -240,6 +240,8 @@ fun SettingsScreen(
     var section by remember { mutableStateOf(SettingsSection.Menu) }
     var logReturnSection by remember { mutableStateOf(SettingsSection.Menu) }
     var editingProvider by remember { mutableStateOf<AIProviderConfig?>(null) }
+    var showAddProviderSheet by remember { mutableStateOf(false) }
+    var providerPresetPrefill by remember { mutableStateOf<com.aicode.feature.settings.data.local.ProviderPreset?>(null) }
     var showMcpDialog by remember { mutableStateOf(false) }
     var editingMcp by remember { mutableStateOf<McpServerEntry?>(null) }
     var selectedSkill by remember { mutableStateOf<SkillUiEntry?>(null) }
@@ -405,7 +407,11 @@ fun SettingsScreen(
             current == SettingsSection.ProviderEditor -> ProviderEditorScreen(
                 viewModel = viewModel,
                 initialProvider = editingProvider,
-                onNavigateBack = { section = SettingsSection.Providers },
+                presetPrefill = providerPresetPrefill,
+                onNavigateBack = {
+                    section = SettingsSection.Providers
+                    providerPresetPrefill = null
+                },
                 onSave = { provider ->
                     viewModel.saveProvider(provider)
                 }
@@ -497,8 +503,8 @@ fun SettingsScreen(
                 actions = {
                     when (current) {
                         SettingsSection.Providers -> IconButton(onClick = {
-                            editingProvider = null
-                            section = SettingsSection.ProviderEditor
+                            providerPresetPrefill = null
+                            showAddProviderSheet = true
                         }) {
                             Icon(FeatherIcons.Plus, contentDescription = stringResource(R.string.settings_add_provider))
                         }
@@ -850,6 +856,24 @@ fun SettingsScreen(
             onSave = { config, scope ->
                 viewModel.upsertMcpServer(editingMcp?.server?.name, editingMcp?.scope, config, scope)
                 showMcpDialog = false
+            }
+        )
+    }
+
+    if (showAddProviderSheet) {
+        ProviderPresetSheet(
+            onDismiss = { showAddProviderSheet = false },
+            onSelectCustom = {
+                showAddProviderSheet = false
+                editingProvider = null
+                providerPresetPrefill = null
+                section = SettingsSection.ProviderEditor
+            },
+            onSelectOfficial = { preset ->
+                showAddProviderSheet = false
+                editingProvider = null
+                providerPresetPrefill = preset
+                section = SettingsSection.ProviderEditor
             }
         )
     }

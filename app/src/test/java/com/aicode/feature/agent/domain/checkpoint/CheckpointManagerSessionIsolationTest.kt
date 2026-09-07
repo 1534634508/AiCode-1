@@ -13,6 +13,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
+import java.nio.charset.Charset
 
 /**
  * 活动 checkpoint 的会话归属。
@@ -165,9 +166,9 @@ class CheckpointManagerSessionIsolationTest {
 
     private class LocalFileAccess : FileAccessProvider {
         override fun readFile(path: String): String = File(path).readText()
-        override fun writeFile(path: String, content: String, overwrite: Boolean) {
+        override fun writeFile(path: String, content: String, overwrite: Boolean, encoding: Charset) {
             File(path).parentFile?.mkdirs()
-            File(path).writeText(content)
+            File(path).writeText(content, encoding)
         }
 
         override fun exists(path: String): Boolean = File(path).exists()
@@ -186,6 +187,8 @@ class CheckpointManagerSessionIsolationTest {
         override fun copyToLocal(path: String): File = throw UnsupportedOperationException()
         override fun deleteRecursively(path: String) = throw UnsupportedOperationException()
         override fun rename(path: String, newPath: String) = throw UnsupportedOperationException()
+        override fun copy(path: String, newPath: String, overwrite: Boolean) = throw UnsupportedOperationException()
+        override fun move(path: String, newPath: String, overwrite: Boolean) = throw UnsupportedOperationException()
         override fun mkdirs(path: String) = throw UnsupportedOperationException()
         override fun parentPath(path: String): String? = throw UnsupportedOperationException()
         override fun toDisplayPath(path: String): String = path

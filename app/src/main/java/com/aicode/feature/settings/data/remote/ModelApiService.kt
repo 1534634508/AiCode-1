@@ -1,7 +1,10 @@
 package com.aicode.feature.settings.data.remote
 
+import android.content.Context
+import com.aicode.R
 import com.aicode.feature.agent.domain.provider.joinUrl
 import com.aicode.feature.settings.domain.model.ProviderType
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -49,7 +52,8 @@ data class ModelTestResult(
  */
 @Singleton
 class ModelApiService @Inject constructor(
-    private val client: OkHttpClient
+    private val client: OkHttpClient,
+    @param:ApplicationContext private val context: Context
 ) {
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -59,18 +63,18 @@ class ModelApiService @Inject constructor(
         apiKey: String,
         type: ProviderType,
         useFullUrl: Boolean = false,
-        userAgent: String = ""
+        customHeaders: Map<String, String> = emptyMap()
     ): Result<FetchModelsResult> = withContext(Dispatchers.IO) {
         val start = System.nanoTime()
         runCatching {
-            if (apiKey.isBlank()) error("请先填写 API Key")
+            if (apiKey.isBlank()) error(context.getString(R.string.provider_api_key_required))
 
             val modelsPath = if (type == ProviderType.GEMINI) "v1beta/models" else "v1/models"
             val url = if (useFullUrl) baseUrl else joinUrl(baseUrl, modelsPath)
             val request = Request.Builder()
                 .url(url)
                 .applyAuth(apiKey, type)
-                .applyUserAgent(userAgent)
+                .applyCustomHeaders(customHeaders)
                 .get()
                 .build()
 
@@ -113,16 +117,16 @@ class ModelApiService @Inject constructor(
                     val debug = ModelTestResult(
                         success = false,
                         latencyMs = latency,
-                        message = "响应缺少列表字段",
+                        message = context.getString(R.string.provider_fetch_missing_fields),
                         requestUrl = url,
                         requestHeaders = reqHeadersMap,
                         requestBody = "",
                         responseCode = response.code,
                         responseHeaders = respHeadersMap,
                         responseBody = body,
-                        errorDetail = "响应缺少列表字段 (models 或 data): $body"
+                        errorDetail = context.getString(R.string.provider_fetch_missing_fields_detail, body)
                     )
-                    throw FetchModelsException("响应缺少列表字段", debug)
+                    throw FetchModelsException(context.getString(R.string.provider_fetch_missing_fields), debug)
                 }
 
                 val modelList = data.mapNotNull { 
@@ -135,7 +139,7 @@ class ModelApiService @Inject constructor(
                 val debug = ModelTestResult(
                     success = true,
                     latencyMs = latency,
-                    message = "成功拉取到 ${modelList.size} 个模型 · ${latency}ms",
+                    message = context.getString(R.string.provider_fetch_success, modelList.size, latency),
                     requestUrl = url,
                     requestHeaders = reqHeadersMap,
                     requestBody = "",
@@ -150,13 +154,14 @@ class ModelApiService @Inject constructor(
                 throw e
             }
             val latency = (System.nanoTime() - start) / 1_000_000
+            val fallback = context.getString(R.string.settings_models_fetch_failed)
             val debug = ModelTestResult(
                 success = false,
                 latencyMs = latency,
-                message = e.message ?: "拉取失败",
+                message = e.message ?: fallback,
                 errorDetail = e.stackTraceToString()
             )
-            throw FetchModelsException(e.message ?: "拉取失败", debug)
+            throw FetchModelsException(e.message ?: fallback, debug)
         }
     }
 
@@ -168,11 +173,11 @@ class ModelApiService @Inject constructor(
         useFullUrl: Boolean,
         useResponseApi: Boolean,
         model: String,
-        userAgent: String = ""
+        customHeaders: Map<String, String> = emptyMap()
     ): ModelTestResult = withContext(Dispatchers.IO) {
         val start = System.nanoTime()
         try {
-            if (apiKey.isBlank()) error("请先填写 API Key")
+            if (apiKey.isBlank()) error(context.getString(R.string.provider_api_key_required))
 
             val (url, payload) = when (type) {
                 ProviderType.ANTHROPIC -> {
@@ -215,7 +220,7 @@ class ModelApiService @Inject constructor(
             val request = Request.Builder()
                 .url(url)
                 .applyAuth(apiKey, type)
-                .applyUserAgent(userAgent)
+                .applyCustomHeaders(customHeaders)
                 .post(payload.toRequestBody("application/json".toMediaType()))
                 .build()
 
@@ -237,7 +242,7 @@ class ModelApiService @Inject constructor(
                     ModelTestResult(
                         success = true,
                         latencyMs = latency,
-                        message = "连通 · ${latency}ms",
+                        message = context.getString(R.string.provider_test_success, latency),
                         requestUrl = url,
                         requestHeaders = reqHeadersMap,
                         requestBody = payload,
@@ -265,7 +270,7 @@ class ModelApiService @Inject constructor(
             ModelTestResult(
                 success = false,
                 latencyMs = latency,
-                message = e.message ?: "请求失败",
+                message = e.message ?: context.getString(R.string.chat_error_title),
                 errorDetail = e.stackTraceToString()
             )
         }
@@ -281,8 +286,8 @@ class ModelApiService @Inject constructor(
             else -> this.header("Authorization", "Bearer $apiKey")
         }
 
-    private fun Request.Builder.applyUserAgent(userAgent: String): Request.Builder =
-        if (userAgent.isNotBlank()) this.header("User-Agent", userAgent) else this
+    private fun Request.Builder.applyCustomHeaders(customHeaders: Map<String, String>): Request.Builder =
+        this.apply { customHeaders.forEach { (name, value) -> if (name.isNotBlank()) header(name, value) } }
 
     /** 转成安全的 JSON 字符串字面量（含引号、正确转义）。 */
     private fun String.jsonStr(): String = JsonPrimitive(this).toString()

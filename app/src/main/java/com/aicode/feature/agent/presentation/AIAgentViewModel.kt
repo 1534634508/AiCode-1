@@ -436,6 +436,77 @@ class AIAgentViewModel @Inject constructor(
         true
     }
 
+    // region 文件复制 / 剪切 / 粘贴
+
+    /** 文件浏览剪切板：复制或剪切后暂存源条目，供粘贴到其它目录。 */
+    private val _browseClipboard = MutableStateFlow<BrowseClipboard?>(null)
+    val browseClipboard: StateFlow<BrowseClipboard?> = _browseClipboard.asStateFlow()
+
+    /** 复制条目进剪切板（剪切板只能存一项，直接覆盖旧的）。 */
+    fun copyBrowseEntry(path: String, name: String) {
+        _browseClipboard.value = BrowseClipboard(path, name, isCut = false)
+    }
+
+    /** 剪切条目进剪切板（粘贴成功后删除源，且只允许粘贴一次）。 */
+    fun cutBrowseEntry(path: String, name: String) {
+        _browseClipboard.value = BrowseClipboard(path, name, isCut = true)
+    }
+
+    /** 清空剪切板。 */
+    fun clearBrowseClipboard() {
+        _browseClipboard.value = null
+    }
+
+    /** 粘贴冲突（目标已存在同名项）待用户确认覆盖。持有源路径与目标目录，确认后调 [pasteBrowseEntryOverwrite]。 */
+    private val _pasteConflict = MutableStateFlow<Pair<String, String>?>(null)
+    val pasteConflict: StateFlow<Pair<String, String>?> = _pasteConflict.asStateFlow()
+
+    /** 把剪切板内容粘贴到 [targetDir]。目标已存在同名项时，发 [pasteConflict] 让 UI 弹窗询问是否覆盖，
+     *  不执行粘贴；否则直接粘贴。粘贴成功即清空剪切板（无论复制/剪切，一次粘贴后失效），失败保留供重试。 */
+    fun pasteBrowseEntry(targetDir: String, onResult: (Boolean) -> Unit) {
+        val clip = _browseClipboard.value ?: return onResult(false)
+        if (clip.sourcePath == targetDir) return onResult(false)
+        val name = clip.sourceName
+        if (!isValidFileEntryName(name)) return onResult(false)
+        val target = "$targetDir/$name"
+        if (fileAccess.exists(target)) {
+            _pasteConflict.value = clip.sourcePath to target
+            return
+        }
+        performPaste(clip, target, overwrite = false, onResult)
+    }
+
+    /** 用户确认覆盖后强制粘贴（目标已存在同名项也会覆盖）。 */
+    fun pasteBrowseEntryOverwrite() {
+        val conflict = _pasteConflict.value ?: return
+        val clip = _browseClipboard.value ?: return
+        _pasteConflict.value = null
+        performPaste(clip, conflict.second, overwrite = true) {}
+    }
+
+    /** 清空粘贴冲突待确认状态（用户点了「取消」时）。 */
+    fun clearPasteConflict() {
+        _pasteConflict.value = null
+    }
+
+    private fun performPaste(clip: BrowseClipboard, target: String, overwrite: Boolean, onResult: (Boolean) -> Unit) {
+        mutateBrowse({ success ->
+            // 无论复制还是剪切，粘贴成功即清空剪切板，避免重复粘贴；失败保留，允许重试。
+            if (success) _browseClipboard.value = null
+            onResult(success)
+        }) {
+            if (clip.isCut) {
+                fileAccess.move(clip.sourcePath, target, overwrite)
+                true
+            } else {
+                fileAccess.copy(clip.sourcePath, target, overwrite)
+                true
+            }
+        }
+    }
+
+    // endregion
+
     /** 当前会话完整信息（根会话与子会话通用；null 表示尚未解析出会话）。 */
     val currentSessionState: StateFlow<ChatSession?> = _currentSessionId
         .flatMapLatest { id ->

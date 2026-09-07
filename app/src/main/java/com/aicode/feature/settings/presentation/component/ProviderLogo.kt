@@ -32,7 +32,7 @@ fun providerBrandKey(provider: AIProviderConfig?): String? {
     return when (provider.type) {
         com.aicode.feature.settings.domain.model.ProviderType.OPENAI -> "openai"
         com.aicode.feature.settings.domain.model.ProviderType.ANTHROPIC -> "anthropic"
-        com.aicode.feature.settings.domain.model.ProviderType.GEMINI -> "gemini"
+        com.aicode.feature.settings.domain.model.ProviderType.GEMINI -> "google"
     }
 }
 
@@ -55,12 +55,14 @@ fun modelBrandKey(modelName: String): String {
         target.contains("minimax") || target.contains("abab") -> "minimax"
         target.contains("moonshot") || target.contains("kimi") -> "moonshot"
         target.contains("zhipu") || target.contains("智谱") || target.contains("bigmodel") || target.contains("glm") -> "zhipu"
-        target.contains("qwen") || target.contains("通义") -> "qwen"
+        // alibaba / 通义千问：qwen 归 alibaba 品牌（阿里云通义），优先级在 gemini 之前以防误匹配。
+        target.contains("qwen") || target.contains("通义") || target.contains("alibaba") || target.contains("aliyun") || target.contains("dashscope") -> "alibaba"
         target.contains("deepseek") || target.contains("deep-seek") -> "deepseek"
         target.contains("grok") || target.contains("xai") -> "grok"
         target.contains("groq") -> "groq"
         target.contains("claude") || target.contains("anthropic") -> "anthropic"
-        target.contains("gemini") || target.contains("gemma") -> "gemini"
+        // google / gemini：gemma、gemini 都归 google 品牌。
+        target.contains("google") || target.contains("gemini") || target.contains("gemma") -> "google"
         target.contains("hunyuan") || target.contains("混元") || target.contains("tencent") -> "hunyuan"
         target.contains("openrouter") -> "openrouter"
         target.contains("perplexity") -> "perplexity"
@@ -80,12 +82,12 @@ fun brandDisplayName(context: Context, key: String): String = when (key) {
     "minimax" -> "MiniMax"
     "moonshot" -> "Moonshot"
     "zhipu" -> context.getString(R.string.provider_brand_zhipu)
-    "qwen" -> context.getString(R.string.provider_brand_tongyi_qianwen)
+    "alibaba" -> "Alibaba"
     "deepseek" -> "DeepSeek"
     "grok" -> "Grok"
     "groq" -> "Groq"
     "anthropic" -> "Anthropic"
-    "gemini" -> "Gemini"
+    "google" -> "Google"
     "hunyuan" -> context.getString(R.string.provider_brand_hunyuan)
     "openrouter" -> "OpenRouter"
     "perplexity" -> "Perplexity"
@@ -104,12 +106,12 @@ fun brandLogoRes(key: String): Int? = when (key) {
     "minimax" -> R.drawable.logo_minimax
     "moonshot" -> R.drawable.logo_moonshot
     "zhipu" -> R.drawable.logo_zhipu
-    "qwen" -> R.drawable.logo_qwen
+    "alibaba" -> R.drawable.logo_qwen
     "deepseek" -> R.drawable.logo_deepseek
     "grok" -> R.drawable.logo_grok
     "groq" -> R.drawable.logo_groq
     "anthropic" -> R.drawable.logo_anthropic
-    "gemini" -> R.drawable.logo_gemini
+    "google" -> R.drawable.logo_gemini
     "hunyuan" -> R.drawable.logo_hunyuan
     "openrouter" -> R.drawable.logo_openrouter
     "perplexity" -> R.drawable.logo_perplexity

@@ -37,8 +37,8 @@ data class AIProviderEntity(
     val balanceScriptPath: String = "",
     /** 套餐余量自动刷新间隔（分钟）。默认 5 分钟。 */
     val balanceRefreshInterval: Int = 5,
-    /** 自定义请求头 User-Agent；留空使用默认。 */
-    val userAgent: String = "",
+    /** 自定义请求头（JSON 编码的 Map<Header 名, 值>，空为 ""），完全覆盖同名默认头。 */
+    val customHeaders: String = "",
     /** 提供商列表排序序号，越小越靠前；新建时分配 max+1。 */
     val sortOrder: Int = 0,
     /** 单独为该提供商配置代理（关闭时跟随全局代理设置）。 */
@@ -47,5 +47,7 @@ data class AIProviderEntity(
     val proxyHost: String = "",
     val proxyPort: Int = 0,
     val proxyUsername: String = "",
-    val proxyPassword: String = ""
+    val proxyPassword: String = "",
+    /** 自定义面板 (DIY) 脚本参数（JSON 编码的 Map<String, String>，空为 ""）。 */
+    val scriptParams: String = ""
 )

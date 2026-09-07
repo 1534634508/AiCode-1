@@ -254,7 +254,7 @@ class StatefulAgentWorkflow @Inject constructor(
         provider.useResponseApi = config.useResponseApi
         provider.providerId = config.id
         provider.logSessionId = sessionId
-        provider.userAgent = config.userAgent
+        provider.customHeaders = config.customHeaders
         val metadata = modelMetadataService.resolve(config.id, config.type, config.effectiveModel)
         // 模型元数据的输出上限（models.dev limit.output）：不传时 Anthropic 会把输出卡在 adapter 兜底值上。
         provider.maxOutputTokens = metadata.outputTokens

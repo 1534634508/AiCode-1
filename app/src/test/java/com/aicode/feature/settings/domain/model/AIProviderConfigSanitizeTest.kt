@@ -12,7 +12,7 @@ class AIProviderConfigSanitizeTest {
         models: List<String> = listOf("gpt-4o"),
         selectedModel: String = "gpt-4o",
         defaultModel: String = "gpt-4o",
-        userAgent: String = "",
+        customHeaders: Map<String, String> = emptyMap(),
         balanceScriptPath: String = "",
         proxyHost: String = "",
         proxyUsername: String = "",
@@ -26,7 +26,7 @@ class AIProviderConfigSanitizeTest {
         defaultModel = defaultModel,
         models = models,
         selectedModel = selectedModel,
-        userAgent = userAgent,
+        customHeaders = customHeaders,
         balanceScriptPath = balanceScriptPath,
         proxyHost = proxyHost,
         proxyUsername = proxyUsername,
@@ -58,17 +58,29 @@ class AIProviderConfigSanitizeTest {
     fun textFields_keepInnerSpacesButDropLineBreaks() {
         val sanitized = config(
             name = " My\nProvider ",
-            userAgent = " AiCode/1.0 (Android)\n",
             balanceScriptPath = " ~/.aicode/scripts/my panel.py \n",
             proxyUsername = " user name\n",
             proxyPassword = " pa ss\r\n"
         ).sanitized()
 
         assertEquals("MyProvider", sanitized.name)
-        assertEquals("AiCode/1.0 (Android)", sanitized.userAgent)
         assertEquals("~/.aicode/scripts/my panel.py", sanitized.balanceScriptPath)
         assertEquals("user name", sanitized.proxyUsername)
         assertEquals("pa ss", sanitized.proxyPassword)
+    }
+
+    @Test
+    fun customHeaders_trimKeysStripLineBreaksAndDropEmptyKeys() {
+        val sanitized = config().copy(customHeaders = mapOf(
+            " User-Agent " to " AiCode/1.0 (Android)\n",
+            "X-Session" to " sk-abc \n",
+            "  " to "ignored"
+        )).sanitized()
+
+        assertEquals(
+            mapOf("User-Agent" to "AiCode/1.0 (Android)", "X-Session" to "sk-abc"),
+            sanitized.customHeaders
+        )
     }
 
     @Test
@@ -82,6 +94,20 @@ class AIProviderConfigSanitizeTest {
         assertEquals(listOf("gpt-4o", "o3-mini"), sanitized.models)
         assertEquals("gpt-4o", sanitized.selectedModel)
         assertEquals("gpt-4o", sanitized.defaultModel)
+    }
+
+    @Test
+    fun scriptParams_trimKeysStripLineBreaksAndDropEmptyKeys() {
+        val sanitized = config().copy(scriptParams = mapOf(
+            " ACCOUNT_ID " to "v1\n",
+            "SECRET" to " sk-abc \n",
+            "  " to "ignored"
+        )).sanitized()
+
+        assertEquals(
+            mapOf("ACCOUNT_ID" to "v1", "SECRET" to "sk-abc"),
+            sanitized.scriptParams
+        )
     }
 
     @Test
