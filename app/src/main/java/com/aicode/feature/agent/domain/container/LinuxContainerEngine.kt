@@ -671,7 +671,8 @@ class LinuxContainerEngine @Inject constructor(
             "-b", "/proc",
             "-b", "/sys",
             "-b", "/system",  // 绑定 /system 让宿主动态库可用
-            "-0"              // 伪 root，apk 等需要
+            "-0",              // 伪 root，apk 等需要
+            "--link2symlink"    // 硬链接转符号链接，兼容 Android 文件系统
         )
 
         // 把当前工作区目录绑定到容器内 ~/workspace（即 /root/workspace），使命令与文件工具作用于同一目录
