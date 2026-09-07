@@ -194,6 +194,8 @@
     <string name="common_done">Done</string>
     <string name="common_copy">Copy</string>
     <string name="common_copy_success">Copied to clipboard</string>
+    <string name="common_cut">Cut</string>
+    <string name="common_paste">Paste</string>
     <string name="common_allow">Allow</string>
     <string name="common_close">Close</string>
     <string name="workbench_split_handle">Drag to resize panes</string>
@@ -421,6 +423,12 @@
     <string name="file_browser_create_failed">Create failed: name may already exist or the folder is not writable</string>
     <string name="file_browser_rename_failed">Rename failed: the name may already exist</string>
     <string name="file_browser_delete_failed">Delete failed</string>
+    <string name="file_browser_paste_here">Paste here</string>
+    <string name="file_browser_paste_conflict_title">Same name already exists</string>
+    <string name="file_browser_paste_conflict_message">An item named "%1$s" already exists at the destination. Overwrite?</string>
+    <string name="common_overwrite">Overwrite</string>
+    <string name="file_browser_clipboard_cut">Cut</string>
+    <string name="file_browser_clipboard_copy">Copy</string>
     <string name="editor_undo">Undo</string>
     <string name="editor_redo">Redo</string>
     <string name="editor_save_success">Saved</string>

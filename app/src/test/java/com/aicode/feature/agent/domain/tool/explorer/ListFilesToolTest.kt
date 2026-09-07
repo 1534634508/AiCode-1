@@ -13,6 +13,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
+import java.nio.charset.Charset
 
 /**
  * list 工具的 `| head [-n N]` 输出截断与管道白名单。
@@ -42,7 +43,7 @@ class ListFilesToolTest {
 
         override fun readFile(path: String): String = throw UnsupportedOperationException()
         override fun readLines(path: String): Sequence<String> = throw UnsupportedOperationException()
-        override fun writeFile(path: String, content: String, overwrite: Boolean) = throw UnsupportedOperationException()
+        override fun writeFile(path: String, content: String, overwrite: Boolean, encoding: Charset) = throw UnsupportedOperationException()
         override fun fileSize(path: String): Long = throw UnsupportedOperationException()
         override fun lastModified(path: String): Long = throw UnsupportedOperationException()
         override fun permissions(path: String): String = throw UnsupportedOperationException()
@@ -52,6 +53,8 @@ class ListFilesToolTest {
         override fun mkdirs(path: String) = throw UnsupportedOperationException()
         override fun deleteRecursively(path: String) = throw UnsupportedOperationException()
         override fun rename(path: String, newPath: String) = throw UnsupportedOperationException()
+        override fun copy(path: String, newPath: String, overwrite: Boolean) = throw UnsupportedOperationException()
+        override fun move(path: String, newPath: String, overwrite: Boolean) = throw UnsupportedOperationException()
     }
 
     private fun runList(args: String): ToolResult = runBlocking {

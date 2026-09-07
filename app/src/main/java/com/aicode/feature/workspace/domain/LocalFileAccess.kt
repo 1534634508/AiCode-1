@@ -2,6 +2,7 @@ package com.aicode.feature.workspace.domain
 
 import java.io.File
 import java.io.IOException
+import java.nio.charset.Charset
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.NoSuchFileException
 import javax.inject.Inject
@@ -29,14 +30,22 @@ class LocalFileAccess @Inject constructor(
     override fun readLines(path: String): Sequence<String> {
         val file = resolve(path)
         if (!file.exists()) throw NoSuchFileException(file)
-        return file.bufferedReader().useLines { it.toList() }.asSequence()
+        // 惰性 Sequence：每次迭代才读下一行，大文件不整份载入；迭代结束后随 use 关闭 reader。
+        // 用 for 循环（而非 forEach 非挂起 lambda）内联，yield 才能合法出现在 builder 的挂起作用域里。
+        return sequence {
+            file.bufferedReader().use { reader ->
+                for (line in reader.lineSequence()) {
+                    yield(line)
+                }
+            }
+        }
     }
 
-    override fun writeFile(path: String, content: String, overwrite: Boolean) {
+    override fun writeFile(path: String, content: String, overwrite: Boolean, encoding: Charset) {
         val file = resolve(path)
         if (file.exists() && !overwrite) throw FileAlreadyExistsException(file)
         file.parentFile?.mkdirs()
-        file.writeText(content)
+        file.writeText(content, encoding)
     }
 
     override fun exists(path: String): Boolean = resolve(path).exists()
@@ -103,6 +112,46 @@ class LocalFileAccess @Inject constructor(
         if (!source.renameTo(target)) {
             throw IOException("rename failed: ${source.absolutePath} -> ${target.absolutePath}")
         }
+    }
+
+    override fun copy(path: String, newPath: String, overwrite: Boolean) {
+        val source = resolve(path)
+        val target = resolve(newPath)
+        if (!source.exists()) throw NoSuchFileException(source)
+        if (target.exists()) {
+            if (!overwrite) throw FileAlreadyExistsException(target)
+            target.deleteRecursively()
+        }
+        target.parentFile?.mkdirs()
+        if (source.isDirectory) {
+            source.copyRecursively(target, overwrite = false)
+        } else {
+            source.copyTo(target, overwrite = false)
+        }
+    }
+
+    override fun move(path: String, newPath: String, overwrite: Boolean) {
+        val source = resolve(path)
+        val target = resolve(newPath)
+        if (!source.exists()) throw NoSuchFileException(source)
+        if (target.exists()) {
+            if (!overwrite) throw FileAlreadyExistsException(target)
+            target.deleteRecursively()
+        }
+        target.parentFile?.mkdirs()
+        val moved = try {
+            source.renameTo(target)
+        } catch (e: SecurityException) {
+            false
+        }
+        if (moved) return
+        // 回退：复制后删除源（复制中断时源保留，下次重试安全）。
+        if (source.isDirectory) {
+            source.copyRecursively(target, overwrite = false)
+        } else {
+            source.copyTo(target, overwrite = false)
+        }
+        if (!source.deleteRecursively()) throw IOException("delete-after-copy failed: ${source.absolutePath}")
     }
 
     override fun mkdirs(path: String) {

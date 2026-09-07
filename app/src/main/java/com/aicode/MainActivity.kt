@@ -336,6 +336,8 @@ fun AppNavigation() {
     val subSessionsByParent by agentViewModel.subSessionsByParent.collectAsStateWithLifecycle()
     val expandedPaths by agentViewModel.expandedPaths.collectAsStateWithLifecycle()
     val browseState by agentViewModel.browseState.collectAsStateWithLifecycle()
+    val browseClipboard by agentViewModel.browseClipboard.collectAsStateWithLifecycle()
+    val pasteConflict by agentViewModel.pasteConflict.collectAsStateWithLifecycle()
 
     // ── 导出会话：SAF 保存文件 ──
     var pendingExportSessionId by remember { mutableStateOf<String?>(null) }
@@ -429,6 +431,8 @@ fun AppNavigation() {
             subSessionsByParent = subSessionsByParent,
             browseState = browseState,
             expandedPaths = expandedPaths,
+            clipboard = browseClipboard,
+            pasteConflict = pasteConflict,
             onToggleExpand = { agentViewModel.toggleExpand(it) },
             onOpenFile = { filePath -> openFile(filePath, 0, true) },
             onRefreshBrowse = { agentViewModel.refreshBrowse() },
@@ -452,6 +456,18 @@ fun AppNavigation() {
                     if (!ok) toastFileOpFailed(context, R.string.file_browser_delete_failed)
                 }
             },
+            onCopyEntry = { path, name ->
+                agentViewModel.copyBrowseEntry(path, name)
+            },
+            onCutEntry = { path, name ->
+                agentViewModel.cutBrowseEntry(path, name)
+            },
+            onPasteEntry = { targetDir, onResult ->
+                agentViewModel.pasteBrowseEntry(targetDir, onResult)
+            },
+            onClearClipboard = { agentViewModel.clearBrowseClipboard() },
+            onPasteOverwrite = { agentViewModel.pasteBrowseEntryOverwrite() },
+            onCancelPasteOverwrite = { agentViewModel.clearPasteConflict() },
             onSelect = {
                 agentViewModel.selectSession(it.id)
                 if (!permanentDrawer) scope.launch { drawerState.close() }

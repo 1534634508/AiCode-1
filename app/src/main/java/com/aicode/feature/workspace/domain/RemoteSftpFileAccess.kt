@@ -10,11 +10,15 @@ import java.io.BufferedReader
 import java.io.File
 import java.io.IOException
 import java.io.InputStreamReader
+import java.nio.charset.Charset
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.NoSuchFileException
 import javax.inject.Inject
 
 private const val TAG = "RemoteSftpFileAccess"
+
+/** writeFile 单次 printf 传入的 base64 分块大小（4 的倍数），远小于 exec 的 MAX_ARG_STRLEN(128KB)。 */
+private const val BASE64_CHUNK = 48 * 1024
 
 /**
  * [FileAccessProvider] 的远程实现：用 SSH exec channel 执行命令读写远程文件。
@@ -76,6 +80,21 @@ class RemoteSftpFileAccess @Inject constructor(
         }
     }
 
+    /** 同步执行远程命令，返回「输出 + 退出码」。startExecSession 抛异常（未连接）时向外抛。 */
+    private fun execSyncChecked(command: String): Pair<String, Int?> = runBlocking {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val session = connection.startExecSession(command)
+            try {
+                val output = BufferedReader(InputStreamReader(session.inputStream)).readText()
+                runCatching { session.close() }
+                output to session.exitStatus
+            } catch (e: Exception) {
+                runCatching { session.close() }
+                throw e
+            }
+        }
+    }
+
     /** 同步执行远程命令，返回退出码（不抛异常）。 */
     private fun execExitCode(command: String): Int = runBlocking {
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -99,33 +118,50 @@ class RemoteSftpFileAccess @Inject constructor(
 
     override fun readFile(path: String): String {
         val remote = toRemotePath(path)
-        return runCatching { execSync("cat ${shellQuote(remote)}") }
+        val (output, exit) = runCatching { execSyncChecked("cat ${shellQuote(remote)}") }
             .getOrElse {
                 FileLogger.e(TAG, "readFile 失败: $remote", it)
                 throw NoSuchFileException(File(remote))
             }
+        // cat 对不存在的文件退出码非零：兑现「文件不存在抛 NoSuchFileException」的接口契约。
+        if (exit != 0) throw NoSuchFileException(File(remote))
+        return output
     }
 
     override fun readLines(path: String): Sequence<String> {
         val remote = toRemotePath(path)
-        return runCatching { execSync("cat ${shellQuote(remote)}") }
+        val (output, exit) = runCatching { execSyncChecked("cat ${shellQuote(remote)}") }
             .getOrElse { throw NoSuchFileException(File(remote)) }
-            .lines().asSequence()
+        if (exit != 0) throw NoSuchFileException(File(remote))
+        return output.lines().asSequence()
     }
 
-    override fun writeFile(path: String, content: String, overwrite: Boolean) {
+    override fun writeFile(path: String, content: String, overwrite: Boolean, encoding: Charset) {
         val remote = toRemotePath(path)
         if (exists(path) && !overwrite) throw FileAlreadyExistsException(File(remote))
         // 确保父目录存在
         val parent = remote.substringBeforeLast('/', "")
         if (parent.isNotEmpty()) execExitCode("mkdir -p ${shellQuote(parent)}")
-        // 用 base64 中转写入：内容编码为单行 base64（无换行、无引号、无特殊字符），远程解码落盘。
-        // 相比 printf %s 直接把原始内容作命令行参数传递，base64 不受换行/引号/二进制内容的破坏，
-        // 与 readBytes/copyToLocal 的 base64 中转方式对称。
-        val b64 = java.util.Base64.getEncoder().encodeToString(content.toByteArray(Charsets.UTF_8))
+        // 内容按指定编码转字节，再 base64 中转落盘（单行、无换行/引号/特殊字符）。
+        // 分块写入：整段 base64 作单个 printf 参数会撞 exec 的 MAX_ARG_STRLEN(128KB) 上限，
+        // 大文件据此 E2BIG 失败；这里拆成 48KB 一段（4 的倍数），逐段 printf | base64 -d >> 落盘。
+        val bytes = content.toByteArray(encoding)
+        val b64 = java.util.Base64.getEncoder().encodeToString(bytes)
+        if (b64.isEmpty()) {
+            // 空内容：overwrite 时截断为空文件；追加模式为空操作（无块可写，避免漏掉 truncate 语义）。
+            if (overwrite) {
+                val exit = execExitCode(": > ${shellQuote(remote)}")
+                if (exit != 0) throw IOException("writeFile 截断失败 退出码=$exit: $remote")
+            }
+            return
+        }
+        // 首块用覆盖/追加，其余块一律追加。
         val redirect = if (overwrite) ">" else ">>"
-        val exit = execExitCode("printf %s ${shellQuote(b64)} | base64 -d $redirect ${shellQuote(remote)}")
-        if (exit != 0) FileLogger.w(TAG, "writeFile 退出码=$exit: $remote")
+        b64.chunked(BASE64_CHUNK).forEachIndexed { i, chunk ->
+            val op = if (i == 0) redirect else ">>"
+            val exit = execExitCode("printf %s ${shellQuote(chunk)} | base64 -d $op ${shellQuote(remote)}")
+            if (exit != 0) throw IOException("writeFile 分块写入失败 退出码=$exit: $remote")
+        }
     }
 
     override fun exists(path: String): Boolean {
@@ -199,23 +235,27 @@ class RemoteSftpFileAccess @Inject constructor(
 
     override fun copyToLocal(path: String): File {
         val remote = toRemotePath(path)
-        val tempFile = File.createTempFile("aicode_remote_", ".copy").apply { deleteOnExit() }
-        return runCatching {
+        val tempFile = File.createTempFile("aicode_remote_", ".copy")
+        return try {
             // base64 解码到本地临时文件
             val b64 = execSync("base64 ${shellQuote(remote)} 2>/dev/null")
             tempFile.writeBytes(java.util.Base64.getMimeDecoder().decode(b64))
             tempFile
-        }.getOrElse {
-            tempFile.delete()
-            FileLogger.e(TAG, "copyToLocal 失败: $remote", it)
+        } catch (e: Exception) {
+            // 用完即删：临时文件不依赖 deleteOnExit（只在进程退出清），失败路径也回收，避免长会话累积。
+            runCatching { tempFile.delete() }
+            FileLogger.e(TAG, "copyToLocal 失败: $remote", e)
             throw NoSuchFileException(File(remote))
         }
     }
 
     override fun delete(path: String) {
         val remote = toRemotePath(path)
-        // -r 递归删目录，-f 忽略不存在
-        execExitCode("rm -rf ${shellQuote(remote)}")
+        // 接口约定 delete 只删文件或空目录：rm -f 删文件（-f 忽略不存在），
+        // rmdir 删空目录；目录非空时两者都失败 → 抛异常，与本地 File.delete()（只删空目录）对齐。
+        // 用 `||` 短路：文件走 rm 成功即止，空目录走 rmdir 成功即止。
+        val exit = execExitCode("rm -f ${shellQuote(remote)} || rmdir ${shellQuote(remote)}")
+        if (exit != 0) throw IOException("delete 退出码=$exit: $remote")
     }
 
     override fun deleteRecursively(path: String) {
@@ -230,6 +270,32 @@ class RemoteSftpFileAccess @Inject constructor(
         if (!exists(path)) throw NoSuchFileException(File(from))
         // busybox mv 未必支持 -n，先自行判存再 mv，避免静默覆盖同名目标
         if (exists(newPath)) throw FileAlreadyExistsException(File(to))
+        val exit = execExitCode("mv ${shellQuote(from)} ${shellQuote(to)}")
+        if (exit != 0) throw IOException("mv 退出码=$exit: $from -> $to")
+    }
+
+    override fun copy(path: String, newPath: String, overwrite: Boolean) {
+        val from = toRemotePath(path)
+        val to = toRemotePath(newPath)
+        if (!exists(path)) throw NoSuchFileException(File(from))
+        if (exists(newPath)) {
+            if (!overwrite) throw FileAlreadyExistsException(File(to))
+            // 覆盖：先删目标，再 cp -r（busybox 无 -T，先删避免目标已存在目录时静默嵌套）
+            execExitCode("rm -rf ${shellQuote(to)}")
+        }
+        val exit = execExitCode("cp -r ${shellQuote(from)} ${shellQuote(to)}")
+        if (exit != 0) throw IOException("cp 退出码=$exit: $from -> $to")
+    }
+
+    override fun move(path: String, newPath: String, overwrite: Boolean) {
+        val from = toRemotePath(path)
+        val to = toRemotePath(newPath)
+        if (!exists(path)) throw NoSuchFileException(File(from))
+        if (exists(newPath)) {
+            if (!overwrite) throw FileAlreadyExistsException(File(to))
+            // 覆盖：先删目标再 mv（busybox mv 未必支持 -n/-f，先删保证语义）
+            execExitCode("rm -rf ${shellQuote(to)}")
+        }
         val exit = execExitCode("mv ${shellQuote(from)} ${shellQuote(to)}")
         if (exit != 0) throw IOException("mv 退出码=$exit: $from -> $to")
     }

@@ -3,6 +3,7 @@ package com.aicode.feature.workspace.domain
 import com.aicode.feature.settings.data.repository.ExecutionMode
 import com.aicode.feature.settings.data.repository.ExecutionModeHolder
 import java.io.File
+import java.nio.charset.Charset
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -28,8 +29,8 @@ class DelegatingFileAccess @Inject constructor(
 
     override fun readLines(path: String): Sequence<String> = delegate().readLines(path)
 
-    override fun writeFile(path: String, content: String, overwrite: Boolean) =
-        delegate().writeFile(path, content, overwrite)
+    override fun writeFile(path: String, content: String, overwrite: Boolean, encoding: Charset) =
+        delegate().writeFile(path, content, overwrite, encoding)
 
     override fun exists(path: String): Boolean = delegate().exists(path)
 
@@ -54,6 +55,10 @@ class DelegatingFileAccess @Inject constructor(
     override fun deleteRecursively(path: String) = delegate().deleteRecursively(path)
 
     override fun rename(path: String, newPath: String) = delegate().rename(path, newPath)
+
+    override fun copy(path: String, newPath: String, overwrite: Boolean) = delegate().copy(path, newPath, overwrite)
+
+    override fun move(path: String, newPath: String, overwrite: Boolean) = delegate().move(path, newPath, overwrite)
 
     override fun mkdirs(path: String) = delegate().mkdirs(path)
 

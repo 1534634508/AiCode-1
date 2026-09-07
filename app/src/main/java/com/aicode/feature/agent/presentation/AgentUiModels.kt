@@ -27,6 +27,17 @@ data class FileTreeNode(
     val ignored: Boolean = false
 )
 
+/** 文件浏览剪切板：一次只能持有一项，复制或剪切后待粘贴。 */
+@Immutable
+data class BrowseClipboard(
+    /** 源条目所在目录路径。 */
+    val sourcePath: String,
+    /** 源条目显示名（UI 提示用）。 */
+    val sourceName: String,
+    /** 是否剪切（粘贴成功后删除源）。 */
+    val isCut: Boolean
+)
+
 /** 单轮工作流的最终结果状态（供 [AgentUIState.Result] 使用）。 */
 enum class WorkflowStatus {
     SUCCESS, PARTIAL_SUCCESS, FAILED, CANCELLED
