@@ -1,14 +1,15 @@
-name: Sync Code to GitCode
+name: Sync Code & Releases to GitCode
 
-# 把 GitHub 主仓库的全部分支与 tag 定时镜像到 GitCode，与 Release 附件同步相互独立：
-#   - 每 6 小时自动执行（schedule），也可在 Actions 页面手动触发（workflow_dispatch）
-#   - push --prune 保证 GitCode 侧 refs 与 GitHub 完全一致（GitCode 上不要直接改代码）
+# 定时把 GitHub 主仓库镜像到 GitCode（面向访问不了 GitHub 的用户）：
+#   - 代码：全部分支与 tag（push --prune 保证 GitCode 侧 refs 与 GitHub 完全一致，GitCode 上不要直接改代码）
+#   - Release 资产：把 GitHub 上的 Release APK 同步到 GitCode Release（幂等，默认保留最新 3 个正式版，不含 RC）
+# 每天 1 次自动执行（schedule，UTC 03:17），也可在 Actions 页面手动触发（workflow_dispatch）。
 # 前置配置：GitHub Secret GITCODE_TOKEN = GitCode 个人访问令牌（需仓库读写 + API 权限）
 #           用户名固定用 oauth2，令牌即密码（已实测 GitCode 支持该认证方式）。
 
 on:
   schedule:
-    - cron: '17 */6 * * *'
+    - cron: '17 3 * * *'
   workflow_dispatch:
 
 jobs:
@@ -40,3 +41,21 @@ jobs:
             "+refs/heads/*:refs/heads/*" \
             "+refs/tags/*:refs/tags/*"
           echo "✓ 代码与 tag 已同步到 https://gitcode.com/${owner}/${repo}"
+
+      # Release APK 同步：从 GitHub Release 下载资产并补齐到 GitCode Release（幂等，
+      # 已同步的跳过、失败可重跑续传）。GitCode 无公开附件配额限制且删除 Release 只能
+      # 删 tag（连带删除，副作用大），故不做自动清理，只增量补齐缺失附件。
+      - name: Sync Release assets to GitCode
+        env:
+          GITCODE_TOKEN: ${{ secrets.GITCODE_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          GITCODE_OWNER: ${{ vars.GITCODE_OWNER }}
+          GITCODE_REPO: ${{ vars.GITCODE_REPO }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$GITCODE_TOKEN" ]]; then
+            echo "::warning::未配置 GITCODE_TOKEN，跳过 GitCode Release 同步。请到 Settings→Secrets and variables→Actions 添加。"
+            exit 0
+          fi
+          python3 scripts/sync-gitcode-releases.py
+          echo "✓ Release 资产已同步到 https://gitcode.com/${GITCODE_OWNER:-${GITHUB_REPOSITORY%/*}}/${GITCODE_REPO:-${GITHUB_REPOSITORY#*/}}/releases"
