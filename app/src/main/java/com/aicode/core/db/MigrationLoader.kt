@@ -11,21 +11,26 @@ class FileMigration(
     val sqlStatements: List<String>
 ) : Migration(version - 1, version) {
     override fun migrate(db: SupportSQLiteDatabase) {
-        db.execSQL(
-            "CREATE TABLE IF NOT EXISTS migration_history (" +
-                    "version INTEGER PRIMARY KEY, " +
-                    "script_name TEXT, " +
-                    "executed_at INTEGER)"
-        )
-        for (sql in sqlStatements) {
-            if (sql.isNotBlank()) {
+        // 整段迁移包在事务里：任一条语句失败整体回滚，避免留半迁移状态
+        db.beginTransaction()
+        try {
+            db.execSQL(
+                "CREATE TABLE IF NOT EXISTS migration_history (" +
+                        "version INTEGER PRIMARY KEY, " +
+                        "script_name TEXT, " +
+                        "executed_at INTEGER)"
+            )
+            for (sql in sqlStatements) {
                 db.execSQL(sql)
             }
+            db.execSQL(
+                "INSERT INTO migration_history (version, script_name, executed_at) VALUES (?, ?, ?)",
+                arrayOf<Any>(version, scriptName, System.currentTimeMillis())
+            )
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
         }
-        db.execSQL(
-            "INSERT INTO migration_history (version, script_name, executed_at) VALUES (?, ?, ?)",
-            arrayOf<Any>(version, scriptName, System.currentTimeMillis())
-        )
         FileLogger.i("MigrationLoader", "Applied migration: $scriptName")
     }
 }
@@ -49,9 +54,7 @@ object MigrationLoader {
                 assetManager.open("$migrationsDir/$fileName").bufferedReader().use { it.readText() }
             }.getOrNull() ?: continue
             
-            val statements = sqlContent.split(";")
-                .map { it.trim() }
-                .filter { it.isNotEmpty() }
+            val statements = SqlScriptSplitter.split(sqlContent)
             
             migrations.add(FileMigration(version, fileName, statements))
         }

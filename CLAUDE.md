@@ -41,13 +41,22 @@ feature-based 分层 + DDD。入口 `AIEditorApp` 初始化 `FileLogger`、`Term
 
 ### 数据库与迁移
 
-Room（`feature/agent/data/local/database/AgentDatabase.kt` + 各 DAO），迁移用自研的文件式方案（`core/db/MigrationLoader.kt`）。改 schema 三步：
+Room（`feature/agent/data/local/database/AgentDatabase.kt` + 各 DAO），迁移分两套，**一个版本只能二选一**：
 
-1. 递增 `AgentDatabase.kt` 的 `SCHEMA_VERSION`（当前 46）。
-2. 在 `app/src/main/assets/migrations/` 新建 `{VERSION}_description.sql`（如 `46_add_provider_multi_key.sql`），**编号必须连续**。
+- **文件式（默认）**：`core/db/MigrationLoader.kt` 读 `app/src/main/assets/migrations/{VERSION}_description.sql`，由 `SqlScriptSplitter` 按语句切分（识别注释与字符串字面量，**字符串里可放心写 `;`**，不再需要 `char(59)` 绕行）；整段迁移包事务、任一条失败整体回滚，成功记入 `migration_history` 表。
+- **AutoMigration**：纯 schema 变更（加列/建表/索引）可用 `@AutoMigration(from = N-1, to = N)` 编译期自动生成，改 entity 忘写迁移会直接编译失败；含数据清理/重命名/改约束的版本必须走文件式。
+
+改 schema 三步：
+
+1. 递增 `AgentDatabase.kt` 的 `SCHEMA_VERSION`（当前 50）。
+2. 文件式：在 `app/src/main/assets/migrations/` 新建 `{VERSION}_description.sql`（如 `46_add_provider_multi_key.sql`），**编号必须连续**；AutoMigration：加注解，保证 `to == SCHEMA_VERSION` 且 `from` 衔接文件式最大版本。
 3. 写入 DDL/SQL，启动时自动执行并记入 `migration_history` 表。
 
-**注意**：迁移文件按 `;` 切分语句，**SQL 字符串字面量里不得出现 `;`**（别写 `';base64,'`），否则语句被截断、整个迁移失败；需要字面分号用 `char(59)`。
+**跨分支冲突硬规则**（RC/hotfix 与 `main` 并行推进时）
+
+- **发布即冻结**：已打 `v*` tag 的迁移文件内容与编号不可再改，补丁只能靠新增迁移修正。
+- **合流后移**：RC/hotfix 若带数据库迁移，其迁移号一旦随 tag 发布即占用；合回 `main` 时，`main` 上所有编号 ≤ 已发布最大版本号的未发布迁移必须整体重编号到该上限之后（内容一字不改、编号连续），并同步递增 `SCHEMA_VERSION`。已发布号一律不可复用。
+- **对账脚本**：`python3 scripts/check_migrations.py`（或 `./gradlew checkMigrations`）校验编号连续、SCHEMA_VERSION 一致、已发布迁移未被篡改/复用；CI（ci.yml 与 android-release.yml）已在构建前挂载，合流后未后移会被直接拦下。
 
 ## 资产同步（硬规则）
 
@@ -90,7 +99,7 @@ Tag 驱动发版，平时 `main` 上的提交不影响发布包。
    - 调用的既有组件签名是否匹配；被改了签名的组件用 `rg` 找出全部调用点确认都改到
    - 新交互是否复用既有实现（例：模型拖拽排序对照 `ProvidersAndLogSection.kt` 的手柄写法）
    - 安全面：可疑网络请求、凭据外发、命令拼接
-   - 〈资产同步〉各项；新增迁移编号是否连续、SQL 字符串内是否有 `;`
+   - 〈资产同步〉各项；含数据库迁移的 PR 必须跑 `python3 scripts/check_migrations.py` 对账（编号连续、与已发布 tag 无冲突）
    - 超出 PR 标题范围的改动记下来交用户定夺
 4. **预演冲突**：`git merge-tree --write-tree --name-only main pr-<N>`。只输出一个 tree hash = 可干净合并；列出文件名 = 有冲突。
 5. **临时分支合并**：`git switch -c merge/pr-<N> main` → `git merge --no-ff pr-<N> -m "Merge pull request #<N> from <owner>/<head-branch>" -m "<PR 标题>"`。
@@ -132,3 +141,4 @@ Tag 驱动发版，平时 `main` 上的提交不影响发布包。
 2. CI 捕获 `v*` Tag 后自动推导版本、构建 APK、发布 Release。
 3. **真机装 RC 包**，至少跑通 AI 对话 + 终端 + 容器启动三条主线。
 4. **有问题**：从该 RC Tag 拉 `hotfix/xxx` 修复（**勿从最新 `main` 或功能分支拉**，否则会把已合入的未发版功能带进修复包）→ 升 rc 序号打 Tag 重发 → 修复合回 `main` 并推送 → 删 hotfix 分支。这是允许在非 `main` 分支打 Tag 的唯一例外。**无问题**：直接打正式 Tag（`v1.7.0`）转正。
+   - 若 hotfix 带数据库迁移：迁移号随 tag 发布即冻结（发布即冻结），合回 `main` 时 `main` 上编号更小的未发布迁移必须后移（见〈数据库与迁移〉合流后移），push 前先跑 `check_migrations.py`，CI 兜底拦截。

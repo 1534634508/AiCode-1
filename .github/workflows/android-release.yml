@@ -100,6 +100,11 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x ./gradlew
 
+      # 迁移版本号对账（发版前最后一道闸）：编号连续、SCHEMA_VERSION 一致、
+      # 已发布迁移未被篡改/复用。tag 是迁移版本号的分界线，发版前必须通过。
+      - name: Check migration versions
+        run: python3 scripts/check_migrations.py
+
       # 发版质量门禁：跑单元测试，失败即中止，避免发出回归包。
       # 只跑 universal debug 变体：单测逻辑与 flavor 无关，跑全 flavor 6 变体是重复编译。
       - name: Run unit tests

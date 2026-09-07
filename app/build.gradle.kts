@@ -252,6 +252,8 @@ android {
     // 否则被测代码里偶发的 FileLogger 日志调用会让纯 JVM 单测崩溃。
     testOptions {
         unitTests.isReturnDefaultValues = true
+        // Robolectric（迁移测试）需要真实 Android resources
+        unitTests.isIncludeAndroidResources = true
     }
 }
 
@@ -373,6 +375,11 @@ dependencies {
 
     // Testing
     testImplementation("junit:junit:4.13.2")
+    // 迁移测试：MigrationTestHelper + Robolectric（在 JVM 上跑 Room 迁移，需真实 resources）
+    testImplementation("androidx.room:room-testing:2.7.1")
+    testImplementation("org.robolectric:robolectric:4.15.1")
+    testImplementation("androidx.test:core-ktx:1.6.1")
+    testImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
     androidTestImplementation(composeBom)
@@ -382,6 +389,13 @@ dependencies {
 
 ksp {
     arg("room.schemaLocation", "$projectDir/schemas")
+}
+
+// 迁移版本号对账：本地手动跑 `./gradlew checkMigrations`（CI 在 workflow 里直接跑脚本）。
+// 校验迁移编号连续、SCHEMA_VERSION 一致、已发布迁移未被篡改/复用（详见 scripts/check_migrations.py）。
+tasks.register<Exec>("checkMigrations") {
+    commandLine("python3", "scripts/check_migrations.py")
+    workingDir(rootProject.projectDir)
 }
 
 // assets 合并前必须先生成文档，否则首次构建（或 clean 后）APK 里会没有 docs/。
