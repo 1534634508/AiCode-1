@@ -114,6 +114,10 @@ private const val MESSAGE_ENTRY_MAX_STAGGER_MS = 360L
 /** AI 收工后继续逐帧校准的时长（ms）：md 异步解析仍可能改高度，不能一停就收手。 */
 private const val CALIBRATE_TAIL_MS = 1_200L
 
+/** 展开/收起工具卡片后等待 item 高度稳定的最大帧数：diff 渲染、实时输出会分帧长高，
+ *  过早读位置会按瞬时高度算出过大的滚动目标（中间位置长卡片展开被滚过头、标题出视口）。 */
+private const val MAX_TOGGLE_SETTLE_FRAMES = 12
+
 /** 消息未就绪时延迟多久才显示加载提示（ms）：本地读库很快，立即显示反而闪。 */
 private const val MESSAGES_LOADING_HINT_DELAY_MS = 220L
 
@@ -478,12 +482,18 @@ fun AIChatPanel(
 
     // 回底按钮的显示门槛：只用「不在底部」会让流式增长的那一两帧（校准循环还没把视口拉回）
     // 也算离底，按钮跟着闪。要求离底超过半个视口，用户真的翻上去看历史时才出现。
-    val isFarFromBottom by remember(inputBarReservePx) {
+    // messagesReady / messages.isEmpty() 与 totalItemsCount 是同一枚硬币的两面：layoutInfo 是
+    // 「最后一次布局 pass」的产物，LazyColumn 卸载（空会话 WelcomeState、加载占位）后不会自动
+    // 清空——旧会话翻历史后切到空会话，残留布局会让按钮悬在新会话上。totalItemsCount 再拦截
+    // 「新列表尚未按当前消息重测」（layout 开始前 layoutInfo 仍是旧会话的）那一帧。
+    val isFarFromBottom by remember(inputBarReservePx, messagesReady, messages.size) {
         derivedStateOf {
+            if (!messagesReady || messages.isEmpty()) return@derivedStateOf false
             if (!listState.canScrollForward) return@derivedStateOf false
             val layout = listState.layoutInfo
             val lastVisible = layout.visibleItemsInfo.lastOrNull()
                 ?: return@derivedStateOf false
+            if (layout.totalItemsCount != messages.size + 1) return@derivedStateOf false
             if (lastVisible.index < layout.totalItemsCount - 1) return@derivedStateOf true
             val safeBottom = layout.viewportEndOffset - inputBarReservePx
             (lastVisible.offset + lastVisible.size) - safeBottom > layout.viewportEndOffset / 2
@@ -743,15 +753,64 @@ fun AIChatPanel(
                                     // 展开后卡片底部可能被悬浮层（输入框）遮挡：滚动让卡片底部停在悬浮层上沿，
                                     // 与消息气泡的贴底跟随统一。
                                     scope.launch {
-                                        withFrameNanos { }
+                                        // 展开/收起后 item 高度可能连续变几帧（diff 渲染、实时输出逐行增长），
+                                        // 等高度稳定（>0 且连续两帧相同）再读位置：既避免按瞬时高度算出过大的滚动目标，
+                                        // 也避免重组延迟时把折叠前的旧高度误判成「稳定」提前退出。
+                                        var prevSize = -1
+                                        var stableFrames = 0
+                                        for (i in 0 until MAX_TOGGLE_SETTLE_FRAMES) {
+                                            withFrameNanos { }
+                                            val curSize = listState.layoutInfo.visibleItemsInfo
+                                                .firstOrNull { it.index == index }?.size ?: -1
+                                            if (curSize > 0 && curSize == prevSize) {
+                                                stableFrames++
+                                                if (stableFrames >= 2) break
+                                            } else {
+                                                stableFrames = 0
+                                            }
+                                            prevSize = curSize
+                                        }
                                         val layout = listState.layoutInfo
                                         val item = layout.visibleItemsInfo.firstOrNull { it.index == index }
                                         if (item == null || item.offset + item.size <= 0) {
-                                            listState.animateScrollToItem(index)
+                                            // animateScrollToItem 对超一屏的大 item 按估算高度算滚动量，终点会系统性
+                                            // 滚过头（大卡片过头多、小卡片精准）；统一用无估算参与的瞬移落位。
+                                            listState.scrollToItem(index)
                                         } else {
                                             val safeBottom = layout.viewportEndOffset - inputBarReservePx
                                             if (item.offset + item.size > safeBottom + AUTO_SCROLL_TOLERANCE_PX) {
-                                                listState.animateScrollToItem(index, (safeBottom - item.size).coerceAtLeast(0))
+                                                // 目标 = 让卡片底部停在 safeBottom 的顶部位置，但夹在 [0, 当前顶部] 之间：
+                                                // 只向上滚、顶部永不越过视口顶（卡片比可视区还高时对齐到顶部 0），
+                                                // 避免中间位置的长卡片被一次性滚过头、标题滚出屏幕。
+                                                val target = (safeBottom - item.size)
+                                                    .coerceIn(0, item.offset.coerceAtLeast(0))
+                                                listState.scrollToItem(index, target)
+                                                // 兜底：内容高度在滚动后仍可能微变（diff 渲染、实时输出），等布局稳定后
+                                                // 若用户没在拖列表，再精确吸一次位到约束目标（底部尽量压到 safeBottom、
+                                                // 顶部不越视口顶），保证最终位置以实测布局为准。
+                                                var postSize = -1
+                                                var postStable = 0
+                                                for (i in 0 until MAX_TOGGLE_SETTLE_FRAMES) {
+                                                    withFrameNanos { }
+                                                    val cur = listState.layoutInfo.visibleItemsInfo
+                                                        .firstOrNull { it.index == index }?.size ?: -1
+                                                    if (cur > 0 && cur == postSize) {
+                                                        postStable++
+                                                        if (postStable >= 2) break
+                                                    } else {
+                                                        postStable = 0
+                                                    }
+                                                    postSize = cur
+                                                }
+                                                val after = listState.layoutInfo.visibleItemsInfo
+                                                    .firstOrNull { it.index == index }
+                                                if (after != null && !listState.isScrollInProgress) {
+                                                    val corrected = (safeBottom - after.size)
+                                                        .coerceIn(0, after.offset.coerceAtLeast(0))
+                                                    if (kotlin.math.abs(corrected - after.offset) > AUTO_SCROLL_TOLERANCE_PX) {
+                                                        listState.scrollToItem(index, corrected)
+                                                    }
+                                                }
                                             }
                                         }
                                     }

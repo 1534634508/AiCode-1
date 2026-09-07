@@ -109,7 +109,7 @@ class OpenAIAdapter @Inject constructor(
             stream = false,
             prompt_cache_key = if (chatCacheKeyEnabled) logSessionId else null
         )
-        AILogger.logRequest(logSessionId, "OpenAI", model, "POST", url, request)
+        val seq = AILogger.logRequest(logSessionId, "OpenAI", model, "POST", url, request)
 
         val response = try {
             retryStaircase {
@@ -119,10 +119,10 @@ class OpenAIAdapter @Inject constructor(
             throw e
         } catch (e: Exception) {
             val enriched = e.enrichWithHttpErrorBody()
-            AILogger.logError(logSessionId, "OpenAI", enriched)
+            AILogger.logError(logSessionId, "OpenAI", enriched, seq)
             throw enriched
         }
-        AILogger.logResponse(logSessionId, "OpenAI", response)
+        AILogger.logResponse(logSessionId, "OpenAI", response, seq)
 
         val message = response.choices.firstOrNull()?.message
         val finishReason = response.choices.firstOrNull()?.finish_reason
@@ -196,7 +196,7 @@ class OpenAIAdapter @Inject constructor(
     ): AIResponse {
         val url = resolveApiUrl()
         val request = buildResponsesRequest(systemPrompt, messages, tools, reasoningEffort, stream = false)
-        AILogger.logRequest(logSessionId, "OpenAI", model, "POST", url, request)
+        val seq = AILogger.logRequest(logSessionId, "OpenAI", model, "POST", url, request)
 
         val response = try {
             retryStaircase {
@@ -206,10 +206,10 @@ class OpenAIAdapter @Inject constructor(
             throw e
         } catch (e: Exception) {
             val enriched = e.enrichWithHttpErrorBody()
-            AILogger.logError(logSessionId, "OpenAI", enriched)
+            AILogger.logError(logSessionId, "OpenAI", enriched, seq)
             throw enriched
         }
-        AILogger.logResponse(logSessionId, "OpenAI", response)
+        AILogger.logResponse(logSessionId, "OpenAI", response, seq)
 
         val parsed = parseResponsesOutput(response.get("output")?.takeIf { it.isJsonArray }?.asJsonArray)
         val usage = parseResponsesUsage(response.get("usage")?.takeIf { it.isJsonObject }?.asJsonObject)
@@ -268,7 +268,7 @@ class OpenAIAdapter @Inject constructor(
             stream_options = StreamOptions(include_usage = true),
             prompt_cache_key = if (chatCacheKeyEnabled) logSessionId else null
         )
-        AILogger.logRequest(logSessionId, "OpenAI", model, "POST", url, request)
+        val seq = AILogger.logRequest(logSessionId, "OpenAI", model, "POST", url, request)
         // 累积原始 SSE，整轮结束（或失败）后整体落盘，避免高频写盘。
         val rawSse = StringBuilder()
 
@@ -401,11 +401,11 @@ class OpenAIAdapter @Inject constructor(
         } catch (e: Exception) {
             coroutineContext.ensureActive()
             val enriched = e.enrichWithHttpErrorBody()
-            AILogger.logError(logSessionId, "OpenAI", enriched)
+            AILogger.logError(logSessionId, "OpenAI", enriched, seq)
             throw enriched
         } finally {
             // 无论成功/失败/取消，把已收到的原始 SSE 落盘（重试时会从上次中断处续写）。
-            AILogger.logResponseStream(logSessionId, "OpenAI", rawSse.toString())
+            AILogger.logResponseStream(logSessionId, "OpenAI", rawSse.toString(), seq)
         }
     }.flowOn(Dispatchers.IO)
 
@@ -423,7 +423,7 @@ class OpenAIAdapter @Inject constructor(
     ) {
         val url = resolveApiUrl()
         val request = buildResponsesRequest(systemPrompt, messages, tools, reasoningEffort, stream = true)
-        AILogger.logRequest(logSessionId, "OpenAI", model, "POST", url, request)
+        val seq = AILogger.logRequest(logSessionId, "OpenAI", model, "POST", url, request)
         // 累积原始 SSE，整轮结束（或失败）后整体落盘，避免高频写盘。
         val rawSse = StringBuilder()
         try {
@@ -505,10 +505,10 @@ class OpenAIAdapter @Inject constructor(
         } catch (e: Exception) {
             coroutineContext.ensureActive()
             val enriched = e.enrichWithHttpErrorBody()
-            AILogger.logError(logSessionId, "OpenAI", enriched)
+            AILogger.logError(logSessionId, "OpenAI", enriched, seq)
             throw enriched
         } finally {
-            AILogger.logResponseStream(logSessionId, "OpenAI", rawSse.toString())
+            AILogger.logResponseStream(logSessionId, "OpenAI", rawSse.toString(), seq)
         }
     }
 

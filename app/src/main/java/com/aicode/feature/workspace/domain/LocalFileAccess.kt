@@ -1,6 +1,8 @@
 package com.aicode.feature.workspace.domain
 
+import com.aicode.core.util.FileLogger
 import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.NoSuchFileException
@@ -36,7 +38,20 @@ class LocalFileAccess @Inject constructor(
         val file = resolve(path)
         if (file.exists() && !overwrite) throw FileAlreadyExistsException(file)
         file.parentFile?.mkdirs()
-        file.writeText(content)
+        val bytes = content.toByteArray()
+        // fsync + 回读长度校验：writeText 只写入 page cache，延迟分配下的写回错误
+        // （磁盘已满 ENOSPC、存储异常）不会报给调用方，会变成“工具返回 success 但文件没变”。
+        // sync 把错误提前成 IOException，让工具报真实失败，而不是静默丢掉改动。
+        FileOutputStream(file).use { out ->
+            out.write(bytes)
+            out.flush()
+            out.fd.sync()
+        }
+        val actual = file.length()
+        if (actual != bytes.size.toLong()) {
+            throw IOException("write verification failed: ${file.absolutePath} expected ${bytes.size} bytes, found $actual")
+        }
+        FileLogger.i(TAG, "写入: '$path' -> ${file.absolutePath} (${bytes.size} 字节)")
     }
 
     override fun exists(path: String): Boolean = resolve(path).exists()
@@ -116,5 +131,9 @@ class LocalFileAccess @Inject constructor(
 
     override fun toDisplayPath(path: String): String {
         return pathMapper.toContainerPath(resolve(path).absolutePath)
+    }
+
+    private companion object {
+        const val TAG = "LocalFileAccess"
     }
 }

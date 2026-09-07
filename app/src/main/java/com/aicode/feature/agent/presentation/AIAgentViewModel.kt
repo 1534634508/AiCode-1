@@ -188,10 +188,15 @@ class AIAgentViewModel @Inject constructor(
     private val defaultLimit = 30
 
     /**
-     * 各会话各自的输入草稿（内存态）。以前是全局单一一份，在 A 打了半截话切到 B
-     * 那半截话会跟着跑过去。
+     * 各会话各自的输入草稿，按会话区分持久化到磁盘：进程重启后草稿依然保留。
+     * 以前是全局单一一份，在 A 打了半截话切到 B 那半截话会跟着跑过去。
      */
-    private val _inputDrafts = MutableStateFlow<Map<String, String>>(emptyMap())
+    private val draftPrefs = context.getSharedPreferences("agent_input_drafts", Context.MODE_PRIVATE)
+    private val _inputDrafts = MutableStateFlow<Map<String, String>>(
+        draftPrefs.all.mapNotNull { (k, v) ->
+            (v as? String)?.takeIf { it.isNotEmpty() }?.let { k to it }
+        }.toMap()
+    )
     val inputDraft: StateFlow<String> = _currentSessionId
         .flatMapLatest { id ->
             if (id == null) flowOf("") else _inputDrafts.map { it[id].orEmpty() }
@@ -200,16 +205,21 @@ class AIAgentViewModel @Inject constructor(
 
     fun updateInputDraft(text: String) {
         val id = _currentSessionId.value ?: return
-        _inputDrafts.value = if (text.isEmpty()) {
-            _inputDrafts.value - id
+        val editor = draftPrefs.edit()
+        if (text.isEmpty()) {
+            _inputDrafts.value = _inputDrafts.value - id
+            editor.remove(id)
         } else {
-            _inputDrafts.value + (id to text)
+            _inputDrafts.value = _inputDrafts.value + (id to text)
+            editor.putString(id, text)
         }
+        editor.apply()
     }
 
     fun clearInputDraft() {
         val id = _currentSessionId.value ?: return
         _inputDrafts.value = _inputDrafts.value - id
+        draftPrefs.edit().remove(id).apply()
     }
 
     fun loadMoreMessages() {
@@ -1613,6 +1623,7 @@ class AIAgentViewModel @Inject constructor(
             _retryStates.value = _retryStates.value - sid
             _queuedRequests.value = _queuedRequests.value - sid
             _inputDrafts.value = _inputDrafts.value - sid
+            draftPrefs.edit().remove(sid).apply()
             agentNotificationCenter.clear(sid)
         }
 
@@ -1677,9 +1688,9 @@ class AIAgentViewModel @Inject constructor(
         setStreamingReasoning(sessionId, null)
         setCompacting(sessionId, false)
         setRetryState(sessionId, null)
-        checkpointManager.setActiveCheckpointId(null)
+        checkpointManager.setActiveCheckpointId(sessionId, null)
 
-        val checkpoint = checkpointDao.getCheckpointByMessageId(messageId)
+        val checkpoint = checkpointDao.getCheckpointBySessionAndMessage(sessionId, messageId)
         val targetMsgEntity = agentMessageDao.getMessageById(messageId) ?: return@launch
         val attachments = targetMsgEntity.toUIMessage().attachments
 

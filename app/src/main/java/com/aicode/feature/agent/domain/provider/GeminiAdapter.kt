@@ -78,7 +78,7 @@ class GeminiAdapter @Inject constructor(
             }
             path
         }
-        AILogger.logRequest(logSessionId, "Gemini", model, "POST", url, request)
+        val seq = AILogger.logRequest(logSessionId, "Gemini", model, "POST", url, request)
 
         val response = try {
             retryStaircase {
@@ -88,10 +88,10 @@ class GeminiAdapter @Inject constructor(
             throw e
         } catch (e: Exception) {
             val enriched = e.enrichWithHttpErrorBody()
-            AILogger.logError(logSessionId, "Gemini", enriched)
+            AILogger.logError(logSessionId, "Gemini", enriched, seq)
             throw enriched
         }
-        AILogger.logResponse(logSessionId, "Gemini", response)
+        AILogger.logResponse(logSessionId, "Gemini", response, seq)
 
         var contentText = ""
         var thinkingText = ""
@@ -158,7 +158,7 @@ class GeminiAdapter @Inject constructor(
             path
         }
         
-        AILogger.logRequest(logSessionId, "Gemini", model, "POST", url, request)
+        val seq = AILogger.logRequest(logSessionId, "Gemini", model, "POST", url, request)
         val rawSse = StringBuilder()
 
         try {
@@ -264,10 +264,10 @@ class GeminiAdapter @Inject constructor(
         } catch (e: Exception) {
             coroutineContext.ensureActive()
             val enriched = e.enrichWithHttpErrorBody()
-            AILogger.logError(logSessionId, "Gemini", enriched)
+            AILogger.logError(logSessionId, "Gemini", enriched, seq)
             throw enriched
         } finally {
-            AILogger.logResponseStream(logSessionId, "Gemini", rawSse.toString())
+            AILogger.logResponseStream(logSessionId, "Gemini", rawSse.toString(), seq)
         }
     }.flowOn(Dispatchers.IO)
 
@@ -330,7 +330,7 @@ class GeminiAdapter @Inject constructor(
     ): AIResponse {
         val url = resolveInteractionsUrl(stream = false)
         val request = buildInteractionsRequest(systemPrompt, messages, tools, reasoningEffort, stream = false)
-        AILogger.logRequest(logSessionId, "Gemini", model, "POST", url, request)
+        val seq = AILogger.logRequest(logSessionId, "Gemini", model, "POST", url, request)
 
         val response = try {
             retryStaircase {
@@ -340,10 +340,10 @@ class GeminiAdapter @Inject constructor(
             throw e
         } catch (e: Exception) {
             val enriched = e.enrichWithHttpErrorBody()
-            AILogger.logError(logSessionId, "Gemini", enriched)
+            AILogger.logError(logSessionId, "Gemini", enriched, seq)
             throw enriched
         }
-        AILogger.logResponse(logSessionId, "Gemini", response)
+        AILogger.logResponse(logSessionId, "Gemini", response, seq)
 
         val parsed = parseInteractionSteps(response.get("steps")?.takeIf { it.isJsonArray }?.asJsonArray)
         val usage = parseInteractionsUsage(response.get("usage")?.takeIf { it.isJsonObject }?.asJsonObject)
@@ -379,7 +379,7 @@ class GeminiAdapter @Inject constructor(
     ) {
         val url = resolveInteractionsUrl(stream = true)
         val request = buildInteractionsRequest(systemPrompt, messages, tools, reasoningEffort, stream = true)
-        AILogger.logRequest(logSessionId, "Gemini", model, "POST", url, request)
+        val seq = AILogger.logRequest(logSessionId, "Gemini", model, "POST", url, request)
         // 累积原始 SSE，整轮结束（或失败）后整体落盘，避免高频写盘。
         val rawSse = StringBuilder()
         try {
@@ -455,10 +455,10 @@ class GeminiAdapter @Inject constructor(
         } catch (e: Exception) {
             coroutineContext.ensureActive()
             val enriched = e.enrichWithHttpErrorBody()
-            AILogger.logError(logSessionId, "Gemini", enriched)
+            AILogger.logError(logSessionId, "Gemini", enriched, seq)
             throw enriched
         } finally {
-            AILogger.logResponseStream(logSessionId, "Gemini", rawSse.toString())
+            AILogger.logResponseStream(logSessionId, "Gemini", rawSse.toString(), seq)
         }
     }
 

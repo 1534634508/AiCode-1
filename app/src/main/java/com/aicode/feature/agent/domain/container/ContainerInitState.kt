@@ -8,6 +8,9 @@ sealed interface ContainerInitState {
     /** 尚未开始初始化。 */
     data object Idle : ContainerInitState
 
+    /** 正在清理上个容器留下的数据（重置/换镜像后旧 rootfs 的删除），[processed] 为已清理条目数。 */
+    data class CleaningOldRootfs(val processed: Int) : ContainerInitState
+
     /** 正在解压 Alpine rootfs，[processed] 为已处理的 tar 条目数。 */
     data class ExtractingRootfs(val processed: Int) : ContainerInitState
 

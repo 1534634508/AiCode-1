@@ -218,6 +218,7 @@ fun SettingsScreen(
     val containerAnnouncementOutdated by viewModel.containerAnnouncementOutdated.collectAsStateWithLifecycle()
     val imageCatalog by viewModel.imageCatalog.collectAsStateWithLifecycle()
     val imageDownload by viewModel.containerImageDownload.collectAsStateWithLifecycle()
+    val containerReset by viewModel.containerReset.collectAsStateWithLifecycle()
     val imageSourceOptions by viewModel.imageSourceOptions.collectAsStateWithLifecycle()
     val selectedImageSource by viewModel.selectedImageSource.collectAsStateWithLifecycle()
     val downloadedImages by viewModel.downloadedImages.collectAsStateWithLifecycle()
@@ -741,7 +742,13 @@ fun SettingsScreen(
                     onEditCustom = { viewModel.editCustomContainerProfile(it) },
                     onDeleteProfile = { viewModel.deleteContainerProfile(it) },
                     onSwitchConfirmed = onStopAllAndCloseTerminal,
-                    onResetProfile = { viewModel.resetContainer(it) },
+                    onResetProfile = { profile ->
+                        // 重置与切换容器同等破坏性：rootfs 整体删掉，AI 会话与终端标签必须全部停掉，
+                        // 否则它们会继续读写正在被删的目录。
+                        onStopAllAndCloseTerminal()
+                        viewModel.resetContainer(profile)
+                    },
+                    resetState = containerReset,
                     onRestoreBuiltin = { viewModel.restoreBuiltinAlpine() },
                     remoteConnections = remoteConnections
                 )

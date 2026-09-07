@@ -1,6 +1,7 @@
 package com.aicode.feature.agent.domain.checkpoint
 
 import android.content.Context
+import com.aicode.core.util.FileLogger
 import com.aicode.feature.agent.data.local.dao.CheckpointDao
 import com.aicode.feature.agent.data.local.entity.CheckpointEntity
 import com.aicode.feature.agent.data.local.entity.CheckpointFileSnapshotEntity
@@ -10,6 +11,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -23,8 +25,10 @@ class CheckpointManager @Inject constructor(
     private val baseCheckpointDir: File
         get() = File(context.filesDir, "checkpoints")
 
-    @Volatile
-    private var activeCheckpointId: String? = null
+    // 活动 checkpoint 必须按会话隔离：多个会话（含父会话与其子代理）会并行跑 workflow，
+    // 用单一字段会被后创建的会话覆盖，导致文件快照挂到别的会话名下，
+    // 那个会话一撤销就会把本会话刚写好的文件还原/删除。
+    private val activeCheckpointIds = ConcurrentHashMap<String, String>()
 
     /**
      * 在用户发送新消息时调用，创建一个新的 Checkpoint 节点
@@ -44,12 +48,16 @@ class CheckpointManager @Inject constructor(
             createdAt = System.currentTimeMillis()
         )
         checkpointDao.insertCheckpoint(entity)
-        activeCheckpointId = checkpointId
+        activeCheckpointIds[sessionId] = checkpointId
         entity
     }
 
-    fun setActiveCheckpointId(checkpointId: String?) {
-        activeCheckpointId = checkpointId
+    fun setActiveCheckpointId(sessionId: String, checkpointId: String?) {
+        if (checkpointId == null) {
+            activeCheckpointIds.remove(sessionId)
+        } else {
+            activeCheckpointIds[sessionId] = checkpointId
+        }
     }
 
     /**
@@ -60,7 +68,7 @@ class CheckpointManager @Inject constructor(
         sessionId: String,
         filePath: String
     ) = withContext(Dispatchers.IO) {
-        val checkpointId = activeCheckpointId ?: return@withContext
+        val checkpointId = activeCheckpointIds[sessionId] ?: return@withContext
 
         // 查重：同一个 checkpointId 内对同一文件只保留最原始的一次快照
         if (checkpointDao.countSnapshot(checkpointId, filePath) > 0) {
@@ -92,6 +100,7 @@ class CheckpointManager @Inject constructor(
             changeType = changeType
         )
         checkpointDao.insertFileSnapshot(snapshotEntity)
+        FileLogger.i(TAG, "快照: session=$sessionId cp=$checkpointId type=$changeType path=$filePath")
     }
 
     /**
@@ -108,6 +117,10 @@ class CheckpointManager @Inject constructor(
         // 收集 targetCheckpointId 及其之后所有 Checkpoint 的快照，倒序还原
         val checkpointsToRollback = allCheckpoints.subList(targetIndex, allCheckpoints.size).reversed()
         var restoredFileCount = 0
+        FileLogger.i(
+            TAG,
+            "还原开始: session=$sessionId target=$targetCheckpointId 涉及 ${checkpointsToRollback.size} 个检查点"
+        )
 
         for (cp in checkpointsToRollback) {
             val snapshots = checkpointDao.getFileSnapshotsForCheckpoint(cp.id)
@@ -119,16 +132,19 @@ class CheckpointManager @Inject constructor(
                         val content = snapshotFile.readText()
                         fileAccess.writeFile(snapshot.filePath, content, overwrite = true)
                         restoredFileCount++
+                        FileLogger.i(TAG, "还原覆盖: cp=${cp.id} path=${snapshot.filePath}")
                     }
                 } else if (snapshot.changeType == "CREATE") {
                     // 若是原先新建的文件，回滚时安全删除
                     if (fileAccess.exists(snapshot.filePath)) {
                         fileAccess.delete(snapshot.filePath)
                         restoredFileCount++
+                        FileLogger.i(TAG, "还原删除: cp=${cp.id} path=${snapshot.filePath}")
                     }
                 }
             }
         }
+        FileLogger.i(TAG, "还原结束: session=$sessionId 共处理 $restoredFileCount 个文件")
         restoredFileCount
     }
 
@@ -136,11 +152,16 @@ class CheckpointManager @Inject constructor(
      * 删除 Session 关联的所有 Checkpoint 快照与记录
      */
     suspend fun clearSessionCheckpoints(sessionId: String) = withContext(Dispatchers.IO) {
+        activeCheckpointIds.remove(sessionId)
         checkpointDao.deleteFileSnapshotsForSession(sessionId)
         checkpointDao.deleteCheckpointsForSession(sessionId)
         val sessionDir = File(baseCheckpointDir, sessionId)
         if (sessionDir.exists()) {
             sessionDir.deleteRecursively()
         }
+    }
+
+    private companion object {
+        const val TAG = "CheckpointManager"
     }
 }

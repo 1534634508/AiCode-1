@@ -30,6 +30,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -77,6 +78,7 @@ import com.aicode.core.theme.semanticColors
 import com.aicode.feature.agent.domain.container.ContainerProfile
 import com.aicode.feature.agent.domain.container.RootfsSource
 import com.aicode.feature.settings.data.repository.ExecutionMode
+import com.aicode.feature.settings.presentation.ContainerResetUiState
 import com.aicode.feature.workspace.domain.model.RemoteConnection
 import com.aicode.feature.workspace.domain.model.RemoteProtocol
 import compose.icons.FeatherIcons
@@ -114,6 +116,8 @@ internal fun ContainerSection(
     onDeleteProfile: (ContainerProfile) -> Unit,
     onSwitchConfirmed: () -> Unit = {},
     onResetProfile: (ContainerProfile) -> Unit = {},
+    /** 非 null 说明正在重置，界面弹不可取消的进度框直到删完。 */
+    resetState: ContainerResetUiState? = null,
     onRestoreBuiltin: () -> Unit = {},
     remoteConnections: List<RemoteConnection> = emptyList()
 ) {
@@ -267,6 +271,22 @@ internal fun ContainerSection(
                 }) { Text(stringResource(R.string.container_reset)) }
             },
             dismissButton = { TextButton(onClick = { pendingReset = null }) { Text(stringResource(R.string.common_cancel)) } }
+        )
+    }
+
+    // 大容器删一遍要几十秒：删完前用不可取消的进度框占住界面，避免用户以为卡住或重复点。
+    resetState?.let { state ->
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text(stringResource(R.string.container_resetting_title)) },
+            text = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(Spacing.md))
+                    Text(stringResource(R.string.container_resetting_message, state.name, state.deleted))
+                }
+            },
+            confirmButton = {}
         )
     }
 }

@@ -636,7 +636,7 @@ class LinuxContainerEngine @Inject constructor(
         argv.add("exec \"\$0\" \"\$@\"")
         argv.add(program)
         argv.addAll(programArgs)
-        return ProotInvocation(argv, buildContainerEnv() + profile.env + extraEnv)
+        return ProotInvocation(argv, buildContainerEnv(profile) + profile.env + extraEnv)
     }
 
     /**
@@ -649,7 +649,7 @@ class LinuxContainerEngine @Inject constructor(
         argv.add(defaultShell())
         argv.add("-c")
         argv.add(command)
-        return ProotInvocation(argv, buildContainerEnv() + currentProfile.env)
+        return ProotInvocation(argv, buildContainerEnv(currentProfile) + currentProfile.env)
     }
 
     /**
@@ -703,10 +703,13 @@ class LinuxContainerEngine @Inject constructor(
     }
 
     /** 容器内进程的标准环境变量（proot loader / 动态库 / PATH / HOME 等）。 */
-    private fun buildContainerEnv(): Map<String, String> {
+    private fun buildContainerEnv(profile: ContainerProfile): Map<String, String> {
+        // 每个容器用自己 rootfs 下的 /tmp：镜像自带该目录，但重置/删除别的容器不该影响本容器，
+        // 且 proot 要求 PROOT_TMP_DIR 已存在，故启动前确保建好（同 -b 源路径的处理）。
+        val tmpDir = containerInstaller.prootTmpDirFor(profile).apply { mkdirs() }
         return mapOf(
             // Android proot 必需的环境变量
-            "PROOT_TMP_DIR" to containerInstaller.prootTmpDir.absolutePath, // Android 没有 /tmp
+            "PROOT_TMP_DIR" to tmpDir.absolutePath, // Android 没有 /tmp
             // Termux proot 的 loader 分离，必须用 PROOT_LOADER/_32 指向，否则无法注入子进程而起不来。
             "PROOT_LOADER" to containerInstaller.prootLoader.absolutePath,
             "PROOT_LOADER_32" to containerInstaller.prootLoader32.absolutePath,

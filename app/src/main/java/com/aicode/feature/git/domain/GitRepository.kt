@@ -26,6 +26,9 @@ private const val TAG = "GitRepository"
  *
  * 命令经 [shellQuote] 逐参数转义后拼成单条 `git ...` 字符串交给 `/bin/sh -c`，故格式串里的
  * `|`、`%(...)`、含空格的路径都能安全传递。
+ *
+ * 所有命令带 `-c core.quotepath=false`：git 默认把路径里的非 ASCII 字节转成八进制转义
+ * （`中文` → `\344\270\255\346\226\207`），关掉后直接输出 UTF-8 原文，中文目录/文件名不再乱码。
  */
 @Singleton
 class GitRepository @Inject constructor(
@@ -56,24 +59,21 @@ class GitRepository @Inject constructor(
     private suspend fun gitChecked(
         vararg args: String
     ): String {
-        val cmd = buildString {
-            append("git")
-            args.forEach { append(' '); append(shellQuote(it)) }
-        }
         // 用不限幅执行：diff 内容/文件内容可能远超 AI 工具链路的 4 万字符限幅，
         // 截断占位符会混入 diff 数据流被 UI 渲染成伪 diff 行。
-        val result = engine.runCommandSyncUnbounded(cmd, workspaceRepository.currentPath())
+        val result = engine.runCommandSyncUnbounded(buildGitCommand(args), workspaceRepository.currentPath())
         if (result.exitCode == 0) return result.output
         throw GitCommandFailureException(result.output.ifBlank { "git 退出码 ${result.exitCode}" })
     }
 
     /** 拼命令并跑（不判退出码），[git] 与 [gitChecked] 复用。 */
-    private suspend fun gitRaw(args: Array<out String>): String {
-        val cmd = buildString {
-            append("git")
-            args.forEach { append(' '); append(shellQuote(it)) }
-        }
-        return engine.runCommandSyncUnbounded(cmd, workspaceRepository.currentPath()).output
+    private suspend fun gitRaw(args: Array<out String>): String =
+        engine.runCommandSyncUnbounded(buildGitCommand(args), workspaceRepository.currentPath()).output
+
+    /** 拼成交给 `/bin/sh -c` 的单条命令字符串，逐参数 [shellQuote] 转义。 */
+    private fun buildGitCommand(args: Array<out String>): String = buildString {
+        append("git -c core.quotepath=false")
+        args.forEach { append(' '); append(shellQuote(it)) }
     }
 
     /** 当前工作区是否处于一个 git 工作树内。SSH 未连接等异常时返回 false 而非抛出，避免 UI 崩溃。 */
@@ -133,7 +133,7 @@ class GitRepository @Inject constructor(
             val y = line[1]
             val rawPath = line.substring(3)
             // 重命名形如 "old -> new"，展示新路径。
-            val path = unquotePorcelainPath(rawPath.substringAfter(" -> ").trim())
+            val path = unquoteGitPath(rawPath.substringAfter(" -> ").trim())
 
             if (x == '?' && y == '?') {
                 untracked.add(path)
@@ -308,7 +308,7 @@ class GitRepository @Inject constructor(
                 if (l.isBlank() || tab < 0) null
                 else {
                     val status = l.substring(0, tab).trim()
-                    val path = l.substring(tab + 1).trim()
+                    val path = unquoteGitPath(l.substring(tab + 1).trim())
                     GitFileChange(path, status, staged = false)
                 }
             }.toList()
@@ -360,6 +360,7 @@ class GitRepository @Inject constructor(
         val raw = git("ls-files", "--others", "--exclude-standard", "--", dir)
         if (raw.isBlank() || raw.startsWith("fatal:")) return emptyList()
         return raw.split('\n').mapNotNull { it.removeSuffix("\r").trim().ifBlank { null } }
+            .map { unquoteGitPath(it) }
     }
 
     /** 仓库是否已有提交（HEAD 可解析）。空仓库里 `reset HEAD` / `ls-tree HEAD` 都会失败。 */
@@ -556,44 +557,6 @@ class GitRepository @Inject constructor(
     }
 
     /**
-     * porcelain v1 对含引号/反斜杠/控制字符的路径会整体加引号并做 C 风格转义
-     * （如 `"a\"b.txt"`、`"a\tb.txt"`、八进制 `\NNN`），这里做反向解析还原真实路径。
-     * 未加引号的普通路径（含空格）原样返回。
-     */
-    private fun unquotePorcelainPath(raw: String): String {
-        if (!raw.startsWith("\"")) return raw
-        val inner = raw.removeSurrounding("\"")
-        val sb = StringBuilder(inner.length)
-        var i = 0
-        while (i < inner.length) {
-            val c = inner[i]
-            if (c == '\\' && i + 1 < inner.length) {
-                when (val n = inner[i + 1]) {
-                    'n' -> { sb.append('\n'); i += 2 }
-                    't' -> { sb.append('\t'); i += 2 }
-                    '\\' -> { sb.append('\\'); i += 2 }
-                    '"' -> { sb.append('"'); i += 2 }
-                    in '0'..'7' -> {
-                        // 八进制 \NNN（最多 3 位）
-                        val end = minOf(i + 4, inner.length)
-                        val octal = inner.substring(i + 1, end).takeWhile { it in '0'..'7' }
-                        if (octal.length == 3) {
-                            sb.append(octal.toInt(8).toChar())
-                            i += 1 + octal.length
-                        } else {
-                            sb.append(c); i += 1
-                        }
-                    }
-                    else -> { sb.append(c); i += 1 }
-                }
-            } else {
-                sb.append(c); i += 1
-            }
-        }
-        return sb.toString()
-    }
-
-    /**
      * 对单个 shell 参数做单引号转义。含「安全字符」之外的字符（空格、`|`、`$`、反引号、`*` 等）时
      * 整体包单引号，内嵌单引号用 `'\''` 关闭-转义-重开。格式串（带 `|`、`%(...)`）、含空格路径、
      * 提交消息均由此安全传递。注意 `|` 是 shell 管道符，**不可**列入安全集。
@@ -603,4 +566,63 @@ class GitRepository @Inject constructor(
         if (arg.all { it.isLetterOrDigit() || it in "_.@/:=+,%-" }) return arg
         return "'" + arg.replace("'", "'\\''") + "'"
     }
+}
+
+/**
+ * porcelain v1 / ls-files / diff-tree 对含引号、反斜杠、空格或控制字符的路径会整体加引号并做
+ * C 风格转义（如 `"a\"b.txt"`、`"a\tb.txt"`、八进制 `\NNN`），这里做反向解析还原真实路径。
+ * 未加引号的普通路径原样返回。
+ *
+ * 八进制转义是**逐字节**的：一个汉字三个字节会转成三段 `\NNN`，逐段 `toChar()` 只能得到
+ * 三个 Latin-1 字符（即乱码），故连续的 `\NNN` 先攒成字节序列再整体按 UTF-8 解码。
+ */
+internal fun unquoteGitPath(raw: String): String {
+    if (!raw.startsWith("\"")) return raw
+    val inner = raw.removeSurrounding("\"")
+    val sb = StringBuilder(inner.length)
+    var i = 0
+    while (i < inner.length) {
+        val c = inner[i]
+        if (c != '\\' || i + 1 >= inner.length) {
+            sb.append(c)
+            i += 1
+            continue
+        }
+        if (inner[i + 1] in '0'..'7') {
+            val bytes = mutableListOf<Byte>()
+            while (i + 1 < inner.length && inner[i] == '\\' && inner[i + 1] in '0'..'7') {
+                val octal = inner.substring(i + 1, minOf(i + 4, inner.length)).takeWhile { it in '0'..'7' }
+                if (octal.length != 3) break
+                bytes.add(octal.toInt(8).toByte())
+                i += 4
+            }
+            if (bytes.isEmpty()) {
+                sb.append(c)
+                i += 1
+            } else {
+                sb.append(String(bytes.toByteArray(), Charsets.UTF_8))
+            }
+            continue
+        }
+        val decoded = when (inner[i + 1]) {
+            'a' -> '\u0007'
+            'b' -> '\b'
+            'f' -> '\u000C'
+            'n' -> '\n'
+            'r' -> '\r'
+            't' -> '\t'
+            'v' -> '\u000B'
+            '"' -> '"'
+            '\\' -> '\\'
+            else -> null
+        }
+        if (decoded == null) {
+            sb.append(c)
+            i += 1
+        } else {
+            sb.append(decoded)
+            i += 2
+        }
+    }
+    return sb.toString()
 }

@@ -14,6 +14,8 @@ import org.apache.commons.compress.compressors.xz.XZCompressorInputStream
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
+import java.nio.file.LinkOption
+import java.nio.file.attribute.BasicFileAttributes
 import java.nio.file.attribute.PosixFilePermissions
 import java.util.zip.GZIPInputStream
 import javax.inject.Inject
@@ -191,6 +193,9 @@ class ContainerInstaller @Inject constructor(
          * 与 assets 里实际放的 Alpine 版本保持一致以便排查。
          */
         private const val INSTALL_VERSION = "alpine-3.21.3-v6"
+
+        /** 删 rootfs 时每删这么多条目回调一次进度（太密会刷爆 UI 状态流）。 */
+        private const val DELETE_PROGRESS_STEP = 2000
     }
 
     /** assets 内的架构特定目录 */
@@ -252,12 +257,21 @@ class ContainerInstaller @Inject constructor(
         get() = nativeLibDir
 
     /**
-     * PRoot 在 Android 上必须的临时目录（Android 没有 /tmp）。
+     * 内置容器的 PRoot 临时目录（Android 没有 /tmp）。**私有**：容器启动一律走 [prootTmpDirFor]，
+     * 免得又把别的容器指到内置 rootfs 里来。
      * 放在 rootfs 的 /tmp（宿主 filesDir/rootfs/tmp）：cache 目录会被系统清理（清缓存后 proot
-     * 找不到临时目录报 can't canonicalize），files 目录稳定；rootfs 重装后自带 /tmp 会重建，无需额外处理。
+     * 找不到临时目录报 can't canonicalize），files 目录稳定。
      */
-    val prootTmpDir: File
+    private val prootTmpDir: File
         get() = File(rootfsDir, "tmp")
+
+    /**
+     * [profile] 自己 rootfs 里的 /tmp，即该容器的 `PROOT_TMP_DIR`。
+     *
+     * 必须按 profile 取：这是宿主路径，各容器 rootfs 目录相互隔离，共用内置容器的 tmp 会在内置 rootfs
+     * 被重置删掉后让其它容器一起报 can't canonicalize（内置 rootfs 存在时能跑通只是巧合）。
+     */
+    fun prootTmpDirFor(profile: ContainerProfile): File = File(rootfsDirFor(profile), "tmp")
 
     /** 标记文件，内容是已安装的版本号 */
     private val installedMarker: File
@@ -282,8 +296,8 @@ class ContainerInstaller @Inject constructor(
 
         FileLogger.i(TAG, "开始安装容器 rootfs（版本 $INSTALL_VERSION）")
 
-        // 版本不匹配时清掉旧的，保证干净安装
-        if (rootfsDir.exists()) rootfsDir.deleteRecursively()
+        // 版本不匹配时清掉旧的，保证干净安装（大 rootfs 删一遍很慢，带进度报给界面）
+        purgeRootfs(rootfsDir, installedMarker) { onProgress(ContainerInitState.CleaningOldRootfs(it)) }
         rootfsDir.mkdirs()
 
         extractRootfs(onProgress)
@@ -340,7 +354,7 @@ class ContainerInstaller @Inject constructor(
 
         val dest = rootfsDirFor(profile)
         FileLogger.i(TAG, "安装自定义容器 rootfs：${profile.id} -> ${dest.absolutePath}")
-        if (dest.exists()) dest.deleteRecursively()
+        purgeRootfs(dest, customInstalledMarker(profile)) { onProgress(ContainerInitState.CleaningOldRootfs(it)) }
         dest.mkdirs()
 
         when (val src = profile.rootfsSource) {
@@ -358,7 +372,7 @@ class ContainerInstaller @Inject constructor(
             is RootfsSource.RemoteSsh -> { /* 无本地 rootfs，上面已提前 return */ }
         }
         configureResolvConf(dest)
-        prootTmpDir.mkdirs()
+        prootTmpDirFor(profile).mkdirs()
         repairRootfsCompatibility(dest)
         customInstalledMarker(profile).writeText("custom")
         FileLogger.i(TAG, "自定义容器 rootfs 安装完成：${profile.id}")
@@ -419,31 +433,86 @@ class ContainerInstaller @Inject constructor(
         }
     }
 
-    /** 删除自定义 profile 的 rootfs 目录（删 profile 时调用）。内置 rootfs 不可删，远程 SSH 无 rootfs 可删。 */
-    fun deleteCustomRootfs(profile: ContainerProfile) {
+    /**
+     * 删除自定义 profile 的 rootfs 目录（删 profile 时调用）。内置 rootfs 不可删，远程 SSH 无 rootfs 可删。
+     * [onProgress] 报告已删条目数，供界面显示进度。
+     */
+    suspend fun deleteCustomRootfs(
+        profile: ContainerProfile,
+        onProgress: (Int) -> Unit = {}
+    ) = withContext(Dispatchers.IO) {
         // profile 被删除或换镜像，缓存随之作废（重新运行时重新检测）。
         containerOsDetector.clear(profile.id)
-        if (profile.isBuiltin) return
-        if (profile.rootfsSource is RootfsSource.RemoteSsh) return
-        rootfsDirFor(profile).deleteRecursively()
+        if (profile.isBuiltin) return@withContext
+        if (profile.rootfsSource is RootfsSource.RemoteSsh) return@withContext
+        purgeRootfs(rootfsDirFor(profile), customInstalledMarker(profile), onProgress)
     }
 
     /**
      * 重置内置 Alpine 容器：删除其 rootfs 目录（含 .installed / .provisioned 标记），
      * 下次 [ensureInstalled] 会重新解压；进入终端时由初始化菜单重新引导安装。供内置镜像「重置」按钮调用。
      */
-    fun resetBuiltinRootfs() {
-        if (rootfsDir.exists()) rootfsDir.deleteRecursively()
+    suspend fun resetBuiltinRootfs(onProgress: (Int) -> Unit = {}) = withContext(Dispatchers.IO) {
+        purgeRootfs(rootfsDir, installedMarker, onProgress)
     }
 
     /** 按 [profile] 统一重置 rootfs：内置走 [resetBuiltinRootfs]，自定义本地删其 rootfs 目录，远程 SSH 无本地数据不操作。 */
-    fun resetRootfs(profile: ContainerProfile) {
+    suspend fun resetRootfs(profile: ContainerProfile, onProgress: (Int) -> Unit = {}) {
         if (profile.isBuiltin) {
-            resetBuiltinRootfs()
+            resetBuiltinRootfs(onProgress)
             return
         }
-        deleteCustomRootfs(profile)
+        deleteCustomRootfs(profile, onProgress)
     }
+
+    /**
+     * 删空一个 rootfs 目录，[onProgress] 报告累计已删条目数。
+     *
+     * 先删 [marker]：装满工具的 rootfs 有十万级 inode，删一遍要几十秒，万一中途进程被杀，标记
+     * 已经没了，残缺目录不会再被 [isInstalledFor] 当成装好的容器，下次进容器会先删干净再重新解压。
+     */
+    private fun purgeRootfs(dir: File, marker: File, onProgress: (Int) -> Unit) {
+        if (!dir.exists()) return
+        marker.delete()
+        val count = deleteTree(dir, 0, onProgress)
+        FileLogger.i(TAG, "已删除 rootfs ${dir.name}，共 $count 项")
+    }
+
+    /**
+     * 递归删除 [root]，返回从 [startCount] 起算的累计已删条目数，每 [DELETE_PROGRESS_STEP] 项回调一次。
+     *
+     * 不用 [File.deleteRecursively]：它按 `File.isDirectory` 判断，会跟随符号链接下钻——rootfs 的
+     * /bin、/usr/lib 下满是 symlink，跟随不仅白跑一遍链接目标（大容器上慢出好几倍），指向自身祖先时
+     * 还会一路下钻到路径超长才停，更别说链接指向 rootfs 外面时会删掉别处的数据。这里用
+     * NOFOLLOW_LINKS 判定目录，符号链接一律当普通条目 unlink。
+     */
+    private fun deleteTree(root: File, startCount: Int, onProgress: (Int) -> Unit): Int {
+        var count = startCount
+        val pending = ArrayDeque<File>()
+        val dirs = ArrayDeque<File>()
+        pending.addLast(root)
+        while (pending.isNotEmpty()) {
+            val entry = pending.removeLast()
+            if (isRealDirectory(entry)) {
+                dirs.addLast(entry)
+                entry.listFiles()?.forEach { pending.addLast(it) }
+            } else if (entry.delete()) {
+                count++
+                if (count % DELETE_PROGRESS_STEP == 0) onProgress(count)
+            }
+        }
+        // 目录得等自己空了才删得掉：dirs 按自浅入深的发现顺序入队，从队尾往回删即先深后浅。
+        while (dirs.isNotEmpty()) {
+            if (dirs.removeLast().delete()) count++
+        }
+        onProgress(count)
+        return count
+    }
+
+    /** 是否真目录：符号链接即便指向目录也返回 false，防止删除时跟着链接下钻。 */
+    private fun isRealDirectory(file: File): Boolean = runCatching {
+        Files.readAttributes(file.toPath(), BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS).isDirectory
+    }.getOrDefault(false)
 
     init {
         CoroutineScope(Dispatchers.IO).launch {

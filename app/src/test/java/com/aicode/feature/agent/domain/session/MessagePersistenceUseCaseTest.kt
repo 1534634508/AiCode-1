@@ -48,4 +48,20 @@ class MessagePersistenceUseCaseTest {
 
         assertEquals(normal, MessagePersistenceUseCase.sanitizeContent(normal))
     }
+
+    @Test
+    fun capLargeField_truncatesOversizedJson() {
+        val oversized = "[{\"id\":\"" + "a".repeat(300_000) + "\"}]"
+
+        val result = MessagePersistenceUseCase.capLargeField(oversized)
+
+        assertTrue(result.length <= MessagePersistenceUseCase.MAX_CONTENT_CHARS)
+    }
+
+    @Test
+    fun capLargeField_keepsNormalJsonUnchanged() {
+        val normal = "[{\"id\":\"call_1\",\"name\":\"writeFile\"}]"
+
+        assertEquals(normal, MessagePersistenceUseCase.capLargeField(normal))
+    }
 }

@@ -105,15 +105,15 @@ class MessagePersistenceUseCase @Inject constructor(
                 role = role.name,
                 content = sanitizeContent(content),
                 timestamp = nextTimestamp(),
-                toolCallsJson = if (toolCalls.isNotEmpty()) json.encodeToString(toolCalls) else null,
+                toolCallsJson = if (toolCalls.isNotEmpty()) capLargeField(json.encodeToString(toolCalls)) else null,
                 toolCallId = toolCallId,
                 toolName = toolName,
                 toolArgs = toolArgs,
                 isError = isError,
                 reasoning = reasoning?.let { sanitizeContent(it) },
                 signature = signature,
-                thinkingBlocksJson = thinkingBlocksJson,
-                attachmentsJson = if (attachments.isNotEmpty()) json.encodeToString(attachments) else null,
+                thinkingBlocksJson = thinkingBlocksJson?.let { capLargeField(it) },
+                attachmentsJson = if (attachments.isNotEmpty()) capLargeField(json.encodeToString(attachments)) else null,
                 inputTokens = inputTokens,
                 outputTokens = outputTokens,
                 cachedInputTokens = cachedInputTokens,
@@ -123,7 +123,7 @@ class MessagePersistenceUseCase @Inject constructor(
     }
 
     suspend fun updateContent(messageId: String, newContent: String) {
-        agentMessageDao.updateMessageContent(messageId, newContent)
+        agentMessageDao.updateMessageContent(messageId, sanitizeContent(newContent))
     }
 
     companion object {
@@ -158,6 +158,14 @@ class MessagePersistenceUseCase @Inject constructor(
             }
             return text
         }
+
+        /**
+         * 落库前对 JSON 快照字段（toolCallsJson / thinkingBlocksJson / attachmentsJson）做长度上限截断。
+         * 这些字段不是用户可见文本，截断后 JSON 不再可解析，读取方经 runCatching 降级为「无工具调用 / 无思考快照 / 无附件」，
+         * 而非崩溃；不带截断标记，避免给解析方徒增无意义内容。
+         */
+        internal fun capLargeField(raw: String): String =
+            if (raw.length <= MAX_CONTENT_CHARS) raw else raw.take(MAX_CONTENT_CHARS)
     }
 
     /**
