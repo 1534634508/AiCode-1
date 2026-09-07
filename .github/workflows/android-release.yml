@@ -134,6 +134,17 @@ jobs:
               echo "::warning::missing $src"
             fi
           done
+
+          # 保留 R8 混淆映射（mapping.txt）到 dist/，随 Release 一起发布，供崩溃堆栈反混淆。
+          # 三个 flavor 共享同一份字节码与混淆结果，取 universal 一份即可；
+          # gzip 压缩后只有几 MB（原始约 90MB），retrace/Android Studio 解析前 gunzip 一下。
+          # 命名沿用 aicode-<abi>-<ver> 约定，看到崩溃报告里的版本号即可取对应 mapping。
+          if [[ -f "app/build/outputs/mapping/universal/release/mapping.txt" ]]; then
+            gzip -c "app/build/outputs/mapping/universal/release/mapping.txt" > "dist/aicode-universal-${ver}-mapping.txt.gz"
+            echo "packaged aicode-universal-${ver}-mapping.txt.gz"
+          else
+            echo "::warning::missing mapping.txt（R8 混淆映射）"
+          fi
           ls -lh dist/
 
       - name: Determine release name
@@ -213,6 +224,8 @@ jobs:
             dist/aicode-universal-*.apk
             dist/aicode-arm64-*.apk
             dist/aicode-x86_64-*.apk
+            # R8 映射与 APK 同版本发布，反混淆崩溃报告的凭据（gzip 压缩，体积小；不传 GitCode）
+            dist/aicode-universal-*mapping.txt.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
