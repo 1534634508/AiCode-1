@@ -21,9 +21,9 @@ private val projectionJson = Json { ignoreUnknownKeys = true }
 fun modelToolResultText(toolName: String, transportJson: String): String? {
     val raw = transportJson.trim()
     if (raw.isEmpty()) return null
-    val obj = runCatching { projectionJson.parseToJsonElement(raw).jsonObject }.getOrNull() ?: return null
+    val obj = runCatching { projectionJson.parseToJsonElement(raw) as? JsonObject }.getOrNull() ?: return null
     if (obj["status"]?.jsonPrimitive?.contentOrNull != "success") return null
-    val data = obj["data"]?.jsonObject ?: return null
+    val data = obj["data"] as? JsonObject ?: return null
     return when (toolName) {
         "editFile" -> editProjection(data)
         "writeFile" -> writeProjection(data)
