@@ -148,13 +148,28 @@ object AgentModule {
 
     @Provides
     @Singleton
-    fun provideOkHttpClient(): OkHttpClient {
+    fun provideOkHttpClient(@ApplicationContext context: Context): OkHttpClient {
+        // 统一 UA 为 aicode/<版本> (Android)；请求已带显式 UA（如用户自定义头）时不覆盖。
+        // 版本号走 PackageManager（项目未开启 BuildConfig），dev 构建为 1.x.y-dev.N+hash 天然可溯源。
+        val userAgent = runCatching {
+            val name = context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "unknown"
+            "aicode/$name (Android)"
+        }.getOrDefault("aicode (Android)")
         // 流式 SSE 下读超时是「相邻数据块之间」的等待上限；120s 给慢启动/长思考留足空间，
         // 真正卡死由上层阶梯重试（RetryPolicy）兜底。
         return OkHttpClient.Builder()
             .connectTimeout(120, TimeUnit.SECONDS)
             .readTimeout(120, TimeUnit.SECONDS)
             .writeTimeout(120, TimeUnit.SECONDS)
+            .addInterceptor { chain ->
+                val request = chain.request()
+                val finalRequest = if (request.header("User-Agent") != null) {
+                    request
+                } else {
+                    request.newBuilder().header("User-Agent", userAgent).build()
+                }
+                chain.proceed(finalRequest)
+            }
             .build()
     }
 
