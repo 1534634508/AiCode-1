@@ -233,6 +233,28 @@ class RemoteSftpFileAccess @Inject constructor(
         }
     }
 
+    override fun writeBytes(path: String, bytes: ByteArray, overwrite: Boolean) {
+        val remote = toRemotePath(path)
+        if (exists(path) && !overwrite) throw FileAlreadyExistsException(File(remote))
+        // 与 writeFile 相同的 base64 分块落盘：整段作单个 printf 参数会撞 exec 的 MAX_ARG_STRLEN(128KB) 上限。
+        val parent = remote.substringBeforeLast('/', "")
+        if (parent.isNotEmpty()) execExitCode("mkdir -p ${shellQuote(parent)}")
+        val b64 = java.util.Base64.getEncoder().encodeToString(bytes)
+        if (b64.isEmpty()) {
+            if (overwrite) {
+                val exit = execExitCode(": > ${shellQuote(remote)}")
+                if (exit != 0) throw IOException("writeBytes 截断失败 退出码=$exit: $remote")
+            }
+            return
+        }
+        val redirect = if (overwrite) ">" else ">>"
+        b64.chunked(BASE64_CHUNK).forEachIndexed { i, chunk ->
+            val op = if (i == 0) redirect else ">>"
+            val exit = execExitCode("printf %s ${shellQuote(chunk)} | base64 -d $op ${shellQuote(remote)}")
+            if (exit != 0) throw IOException("writeBytes 分块写入失败 退出码=$exit: $remote")
+        }
+    }
+
     override fun copyToLocal(path: String): File {
         val remote = toRemotePath(path)
         val tempFile = File.createTempFile("aicode_remote_", ".copy")

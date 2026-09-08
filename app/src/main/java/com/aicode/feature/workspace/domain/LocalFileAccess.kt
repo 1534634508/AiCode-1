@@ -106,6 +106,23 @@ class LocalFileAccess @Inject constructor(
         return file.readBytes()
     }
 
+    override fun writeBytes(path: String, bytes: ByteArray, overwrite: Boolean) {
+        val file = resolve(path)
+        if (file.exists() && !overwrite) throw FileAlreadyExistsException(file)
+        file.parentFile?.mkdirs()
+        // 与 writeFile 相同的 fsync + 回读长度校验，避免“报告成功但文件没写全”。
+        FileOutputStream(file).use { out ->
+            out.write(bytes)
+            out.flush()
+            out.fd.sync()
+        }
+        val actual = file.length()
+        if (actual != bytes.size.toLong()) {
+            throw IOException("write verification failed: ${file.absolutePath} expected ${bytes.size} bytes, found $actual")
+        }
+        FileLogger.i(TAG, "写入: '$path' -> ${file.absolutePath} (${bytes.size} 字节)")
+    }
+
     override fun copyToLocal(path: String): File = resolve(path)
 
     override fun delete(path: String) {

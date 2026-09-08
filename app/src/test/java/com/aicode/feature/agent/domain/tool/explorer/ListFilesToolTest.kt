@@ -48,6 +48,7 @@ class ListFilesToolTest {
         override fun lastModified(path: String): Long = throw UnsupportedOperationException()
         override fun permissions(path: String): String = throw UnsupportedOperationException()
         override fun readBytes(path: String): ByteArray = throw UnsupportedOperationException()
+        override fun writeBytes(path: String, bytes: ByteArray, overwrite: Boolean) = throw UnsupportedOperationException()
         override fun copyToLocal(path: String): File = throw UnsupportedOperationException()
         override fun delete(path: String) = throw UnsupportedOperationException()
         override fun mkdirs(path: String) = throw UnsupportedOperationException()
