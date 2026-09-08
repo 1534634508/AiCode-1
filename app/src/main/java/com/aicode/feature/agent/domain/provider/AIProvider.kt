@@ -1,5 +1,6 @@
 package com.aicode.feature.agent.domain.provider
 
+import com.aicode.feature.agent.domain.model.AgentImage
 import com.aicode.feature.agent.domain.model.AgentMessage
 import com.aicode.feature.agent.domain.tool.AgentTool
 import com.aicode.feature.agent.domain.tool.ToolCall
@@ -43,7 +44,12 @@ data class AIResponse(
     /** 本轮输入中命中服务端缓存的部分（OpenAI cached_tokens / Anthropic cache_read_input_tokens / Gemini cachedContentTokenCount）。取不到时为 0。 */
     val cachedInputTokens: Int = 0,
     /** 本轮写入服务端缓存的 token 数（Anthropic cache_creation_input_tokens）。按高于普通输入的单价计费，取不到时为 0。 */
-    val cacheCreationTokens: Int = 0
+    val cacheCreationTokens: Int = 0,
+    /**
+     * 本轮模型直接输出的图片（Gemini Nano Banana 图像模型走 Interactions 时产出）。
+     * 元素带 base64 数据；工作流负责落盘并构造 UI 附件。其他 provider / 模型恒为空。
+     */
+    val images: List<AgentImage> = emptyList()
 ) {
     val isTruncated: Boolean
         get() = stopReason in TRUNCATION_STOP_REASONS

@@ -261,7 +261,10 @@ class MessagePersistenceUseCase @Inject constructor(
                     val toolCalls = e.toolCallsJson?.let {
                         runCatching { json.decodeFromString<List<ToolCall>>(it) }.getOrNull()
                     }?.filter { it.id in validIds } ?: emptyList()
-                    if (e.content.isNotBlank() || toolCalls.isNotEmpty()) {
+                    val imageAttachments = e.attachmentsJson?.let {
+                        runCatching { json.decodeFromString<List<AgentAttachment>>(it) }.getOrNull()
+                    }.orEmpty()
+                    if (e.content.isNotBlank() || toolCalls.isNotEmpty() || imageAttachments.isNotEmpty()) {
                         val previous = result.lastOrNull()
                         if (
                             e.isContextSummary &&
@@ -276,7 +279,9 @@ class MessagePersistenceUseCase @Inject constructor(
                                 toolCalls = toolCalls,
                                 reasoning = e.reasoning ?: "",
                                 signature = e.signature ?: "",
-                                thinkingBlocksJson = e.thinkingBlocksJson ?: ""
+                                thinkingBlocksJson = e.thinkingBlocksJson ?: "",
+                                // 附件里的图片按路径重建 base64（带缓存），供下一轮上下文回放。
+                                images = imageAttachments.mapNotNull { it.toAgentImage() }
                             )
                         )
                     }

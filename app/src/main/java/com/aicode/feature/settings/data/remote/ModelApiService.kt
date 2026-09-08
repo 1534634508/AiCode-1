@@ -187,7 +187,8 @@ class ModelApiService @Inject constructor(
                 ProviderType.GEMINI -> {
                     // Interactions 的请求体是 `input`（step 序列或纯字符串），必须同时切到
                     // v1beta/interactions 端点；仍打到 generateContent 会被以缺 `contents` 拒绝。
-                    if (useResponseApi) {
+                    // 图像模型（Nano Banana 系）只支持 Interactions，无论开关是否开启都强制切。
+                    if (useResponseApi || model.endsWith("-image", ignoreCase = true)) {
                         val u = if (useFullUrl) baseUrl else joinUrl(baseUrl, "v1beta/interactions")
                         u to """{"model":${model.jsonStr()},"input":"hi","store":false}"""
                     } else {

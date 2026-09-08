@@ -93,7 +93,7 @@ object AILogger {
             append(now()).append("  RESPONSE #").append(seq)
             append("   [").append(provider).append(" / stream]\n")
             append("--- raw SSE ---\n")
-            append(redactLargeMedia(raw).ifBlank { "(空响应)" })
+            append(MediaRedactor.redact(raw).ifBlank { "(空响应)" })
             if (!raw.endsWith("\n")) append('\n')
         }
         write(sessionId, text)
@@ -150,22 +150,7 @@ object AILogger {
         null -> "null"
         is String -> body
         else -> runCatching { gson.toJson(body) }.getOrElse { body.toString() }
-    }.let(::redactLargeMedia)
-
-    private fun redactLargeMedia(text: String): String {
-        if (text.isBlank()) return text
-        return text
-            .replace(DATA_URL_IMAGE_REGEX) { match ->
-                val mime = match.groupValues[1]
-                val data = match.groupValues[2]
-                "data:$mime;base64,[base64 omitted: ${data.length} chars]"
-            }
-            .replace(BASE64_FIELD_REGEX) { match ->
-                val key = match.groupValues[1]
-                val data = match.groupValues[2]
-                "\"$key\": \"[base64 omitted: ${data.length} chars]\""
-            }
-    }
+    }.let(MediaRedactor::redact)
 
     private fun write(sessionId: String?, text: String) {
         val dir = logDir ?: return // 未初始化则直接丢弃，避免在无目录时报错刷屏
@@ -189,7 +174,4 @@ object AILogger {
             if (file.lastModified() < cutoff) runCatching { file.delete() }
         }
     }
-
-    private val DATA_URL_IMAGE_REGEX = Regex("data:(image/[A-Za-z0-9.+-]+);base64,([A-Za-z0-9+/=_-]{512,})")
-    private val BASE64_FIELD_REGEX = Regex("\"(base64Data|data)\"\\s*:\\s*\"([A-Za-z0-9+/=_-]{512,})\"")
 }

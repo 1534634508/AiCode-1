@@ -184,7 +184,8 @@ internal fun AgentMessageItem(
     val hasReasoning = message.role == MessageRole.ASSISTANT && !message.reasoning.isNullOrEmpty()
     val hasContent = message.content.hasVisibleContent()
     val hasAttachments = message.attachments.isNotEmpty()
-    if (message.role == MessageRole.ASSISTANT && !hasContent && !hasReasoning) return
+    // 模型直出的图片走附件落库，纯图消息没有正文与思考，同样要展示（不能提前 return）。
+    if (message.role == MessageRole.ASSISTANT && !hasContent && !hasReasoning && !hasAttachments) return
 
     val isUser = message.role == MessageRole.USER
     val screenWidthDp = LocalConfiguration.current.screenWidthDp
@@ -309,11 +310,11 @@ internal fun AgentMessageItem(
                         }
                     }
                 }
-                if (isUser && hasAttachments) {
+                if ((isUser || message.role == MessageRole.ASSISTANT) && hasAttachments) {
                     MessageAttachmentPreviewRow(attachments = message.attachments)
                 }
                 // 气泡下方操作行（工具消息不显示）。纯图片消息没有文字，同样要能撤销/删除，故附件也算
-                if ((hasContent || (isUser && hasAttachments)) && message.role != MessageRole.TOOL) {
+                if ((hasContent || hasAttachments) && message.role != MessageRole.TOOL) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         val iconTint = MaterialTheme.colorScheme.onSurfaceVariant
                         if (hasContent) {

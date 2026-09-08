@@ -282,6 +282,9 @@ class ModelMetadataService @Inject constructor(
                 val inputModalities = modalities?.get("input")?.jsonArray
                     ?.mapNotNull { it.jsonPrimitive.content }
                     .orEmpty()
+                val outputModalities = modalities?.get("output")?.jsonArray
+                    ?.mapNotNull { it.jsonPrimitive.content }
+                    .orEmpty()
                 val cost = model["cost"]?.jsonObject
                 val reasoningOptions = parseReasoningOptions(model["reasoning_options"])
                 ModelMetadata(
@@ -293,6 +296,10 @@ class ModelMetadataService @Inject constructor(
                     outputTokens = limit?.get("output")?.jsonPrimitive?.intOrNull,
                     supportsTools = model["tool_call"]?.jsonPrimitive?.booleanOrNull == true,
                     supportsVision = "image" in inputModalities || "video" in inputModalities || "pdf" in inputModalities,
+                    // 图像输出能力：models.dev 的 modalities.output 标注，或 Nano Banana 系 id 后缀兜底
+                    // （内置快照缺 output 模态时也能识别 gemini-*-image 模型）。
+                    supportsImageOutput = "image" in outputModalities ||
+                        (model["id"]?.jsonPrimitive?.content.orEmpty().endsWith("-image")),
                     supportsReasoning = model["reasoning"]?.jsonPrimitive?.booleanOrNull == true,
                     supportsCustomTemperature = model["temperature"]?.jsonPrimitive?.booleanOrNull == true,
                     reasoningEffortOptions = reasoningOptions.takeIf { it.isNotEmpty() },

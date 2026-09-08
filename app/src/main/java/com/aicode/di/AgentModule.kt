@@ -328,7 +328,8 @@ object AgentModule {
         checkpointManager: CheckpointManager,
         llmCallRecordDao: LlmCallRecordDao,
         keyRotator: ProviderKeyRotator,
-        agentNotificationCenter: AgentNotificationCenter
+        agentNotificationCenter: AgentNotificationCenter,
+        fileAccess: FileAccessProvider
     ): AgentWorkflow {
         return StatefulAgentWorkflow(
             toolRegistry,
@@ -351,7 +352,8 @@ object AgentModule {
             checkpointManager,
             llmCallRecordDao,
             keyRotator,
-            agentNotificationCenter
+            agentNotificationCenter,
+            fileAccess
         )
     }
 }

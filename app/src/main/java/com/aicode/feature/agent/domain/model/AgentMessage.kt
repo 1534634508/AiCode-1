@@ -23,7 +23,12 @@ sealed class AgentMessage {
         /** Anthropic extended thinking 的加密签名。与 [reasoning] 一起原样回传（工具循环必须），否则 400。其他 provider 为空串。 */
         val signature: String = "",
         /** Anthropic thinking / redacted_thinking 内容块的原样快照（JSON 数组文本），回传时需保持原样与原序。其他 provider 为空串。 */
-        val thinkingBlocksJson: String = ""
+        val thinkingBlocksJson: String = "",
+        /**
+         * 本轮模型直接生成的图片（Gemini 图像模型）。内存态下 base64Data 可为空、path 指向容器文件，
+         * 回放时按 path 重建 base64 喂模型；落库只存附件路径不存 base64（见 [MessagePersistenceUseCase]）。
+         */
+        val images: List<AgentImage> = emptyList()
     ) : AgentMessage()
 
     @Serializable

@@ -64,7 +64,9 @@ class GeminiAdapter @Inject constructor(
         tools: List<AgentTool>,
         reasoningEffort: String?
     ): AIResponse {
-        if (useResponseApi) return completeViaInteractions(systemPrompt, messages, tools, reasoningEffort)
+        if (useResponseApi) {
+            return completeViaInteractions(systemPrompt, messages, tools, reasoningEffort)
+        }
 
         val request = buildRequestBody(systemPrompt, messages, tools, reasoningEffort)
 
@@ -96,6 +98,7 @@ class GeminiAdapter @Inject constructor(
         var contentText = ""
         var thinkingText = ""
         val toolCalls = mutableListOf<ToolCall>()
+        val images = mutableListOf<AgentImage>()
         var finishReason: String? = null
         var partsSnapshot: String? = null
 
@@ -116,6 +119,7 @@ class GeminiAdapter @Inject constructor(
                         val text = part.get("text")?.takeIf { !it.isJsonNull }?.asString ?: ""
                         if (isThought) thinkingText += text else contentText += text
                     }
+                    part.inlineImagePart()?.let { images.add(it) }
                     if (part.has("functionCall")) {
                         val fnCall = part.get("functionCall")?.takeIf { it.isJsonObject }?.asJsonObject
                         val name = fnCall?.get("name")?.takeIf { !it.isJsonNull }?.asString ?: ""
@@ -157,7 +161,8 @@ class GeminiAdapter @Inject constructor(
             thinkingBlocksJson = partsSnapshot,
             inputTokens = inputTokens,
             outputTokens = outputTokens,
-            cachedInputTokens = cachedInputTokens
+            cachedInputTokens = cachedInputTokens,
+            images = images
         )
     }
 
@@ -193,6 +198,7 @@ class GeminiAdapter @Inject constructor(
                 attemptOnce = { onContent ->
                 val textBuilder = StringBuilder()
                 val toolCalls = mutableListOf<ToolCall>()
+                val images = mutableListOf<AgentImage>()
                 // model 轮的 parts 原样快照：文本分片按段合并，functionCall 与 thoughtSignature 原样保留。
                 val snapshotParts = mutableListOf<JsonObject>()
                 var currentFinishReason: String? = null
@@ -258,6 +264,11 @@ class GeminiAdapter @Inject constructor(
                                                 }
                                             }
                                         }
+                                        part.inlineImagePart()?.let { img ->
+                                            images.add(img)
+                                            if (firstByteReceived.compareAndSet(false, true)) watchdog.cancel()
+                                            onContent()
+                                        }
                                         if (part.has("functionCall")) {
                                             val fnCall = part.getAsJsonObject("functionCall")
                                             val name = fnCall.get("name")?.asString ?: ""
@@ -282,7 +293,7 @@ class GeminiAdapter @Inject constructor(
                     }
                 }
 
-                emit(AIStreamChunk.Final(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = currentFinishReason, thinkingBlocksJson = snapshotOf(snapshotParts), inputTokens = streamInputTokens, outputTokens = streamOutputTokens, cachedInputTokens = streamCachedInputTokens)))
+                emit(AIStreamChunk.Final(AIResponse(content = textBuilder.toString(), toolCalls = toolCalls, stopReason = currentFinishReason, thinkingBlocksJson = snapshotOf(snapshotParts), inputTokens = streamInputTokens, outputTokens = streamOutputTokens, cachedInputTokens = streamCachedInputTokens, images = images)))
                 },
                 onRetry = { attempt, max, error -> emit(AIStreamChunk.Retrying(attempt, max, error)) }
             )
@@ -389,7 +400,8 @@ class GeminiAdapter @Inject constructor(
             thinkingBlocksJson = parsed.stepsSnapshotJson,
             inputTokens = usage.inputTokens,
             outputTokens = usage.outputTokens,
-            cachedInputTokens = usage.cachedInputTokens
+            cachedInputTokens = usage.cachedInputTokens,
+            images = parsed.images
         )
     }
 
@@ -531,7 +543,7 @@ class GeminiAdapter @Inject constructor(
         if (parts == null || parts.size() == 0) return null
         val needsSnapshot = parts.any { el ->
             val o = el.takeIf { it.isJsonObject }?.asJsonObject ?: return@any false
-            o.has("functionCall") || o.has("thoughtSignature")
+            o.has("functionCall") || o.has("thoughtSignature") || o.has("inlineData")
         }
         return if (needsSnapshot) parts.toString() else null
     }
@@ -546,13 +558,27 @@ class GeminiAdapter @Inject constructor(
      * 把一个流式 part 并入快照：functionCall 单独成段原样保留；文本分片按“是否 thought”分段合并，
      * 分片上的 thoughtSignature 写回所属段（签名是 part 级元数据，只会随某一片到达）。
      */
+    /** 图片 part（camelCase 的 inlineData / snake_case 的 inline_data）→ [AgentImage]；图像模型直出的图整块到达。 */
+    private fun JsonObject.inlineImagePart(): AgentImage? =
+        (get("inlineData") ?: get("inline_data"))?.takeIf { it.isJsonObject }?.asJsonObject?.let { inline ->
+            val data = inline.get("data")?.takeIf { !it.isJsonNull }?.asString
+            if (data.isNullOrBlank()) null
+            else AgentImage(
+                mimeType = inline.get("mimeType")?.takeIf { !it.isJsonNull }?.asString
+                    ?: inline.get("mime_type")?.takeIf { !it.isJsonNull }?.asString
+                    ?: "image/png",
+                base64Data = data
+            )
+        }
+
     private fun accumulateSnapshotPart(snapshot: MutableList<JsonObject>, part: JsonObject, isThought: Boolean) {
         if (part.has("functionCall")) {
             snapshot.add(part.deepCopy())
             return
         }
         if (!part.has("text")) {
-            if (part.has("thoughtSignature")) snapshot.add(part.deepCopy())
+            // 图片整块到达、无文本分片可合并，原样进快照供下一轮编辑时回传（含 SynthID 等元数据）。
+            if (part.has("thoughtSignature") || part.has("inlineData")) snapshot.add(part.deepCopy())
             return
         }
         val last = snapshot.lastOrNull()?.takeIf { prev ->

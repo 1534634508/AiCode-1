@@ -1,7 +1,15 @@
 package com.aicode.feature.agent.domain.workflow
 
+import android.os.SystemClock
+import android.util.Base64
 import com.aicode.core.util.FileLogger
+import com.aicode.feature.agent.data.local.dao.LlmCallRecordDao
+import com.aicode.feature.agent.data.local.entity.LlmCallRecordEntity
+import com.aicode.feature.agent.data.remote.anthropic.AnthropicApi
+import com.aicode.feature.agent.data.remote.gemini.GeminiApi
+import com.aicode.feature.agent.data.remote.openai.OpenAIApi
 import com.aicode.feature.agent.domain.model.AgentContext
+import com.aicode.feature.agent.domain.model.AgentImage
 import com.aicode.feature.agent.domain.model.AgentMessage
 import com.aicode.feature.agent.domain.model.AgentMode
 import com.aicode.feature.agent.domain.notification.AgentNotificationCenter
@@ -37,11 +45,6 @@ import com.aicode.feature.settings.data.repository.DefaultModelSettingsRepositor
 import com.aicode.feature.settings.data.repository.ProviderKeyRotator
 import com.aicode.feature.settings.data.repository.TitleModelSettingsRepository
 import com.aicode.feature.settings.domain.model.AIProviderConfig
-import com.aicode.feature.agent.data.remote.anthropic.AnthropicApi
-import com.aicode.feature.agent.data.remote.gemini.GeminiApi
-import com.aicode.feature.agent.data.remote.openai.OpenAIApi
-import com.aicode.feature.agent.data.local.dao.LlmCallRecordDao
-import com.aicode.feature.agent.data.local.entity.LlmCallRecordEntity
 import com.aicode.feature.agent.domain.provider.AnthropicAdapter
 import com.aicode.feature.agent.domain.provider.fixedTemperature
 import com.aicode.feature.agent.domain.provider.GeminiAdapter
@@ -49,6 +52,7 @@ import com.aicode.feature.agent.domain.provider.isApiKeyFailure
 import com.aicode.feature.agent.domain.provider.OpenAIAdapter
 import com.aicode.feature.settings.domain.model.ProviderType
 import com.aicode.feature.settings.domain.repository.AIProviderRepository
+import com.aicode.feature.workspace.domain.FileAccessProvider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -65,7 +69,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
-import android.os.SystemClock
+import java.util.UUID
 import javax.inject.Inject
 
 /**
@@ -94,7 +98,8 @@ class StatefulAgentWorkflow @Inject constructor(
     private val checkpointManager: CheckpointManager,
     private val llmCallRecordDao: LlmCallRecordDao,
     private val keyRotator: ProviderKeyRotator,
-    private val agentNotificationCenter: AgentNotificationCenter
+    private val agentNotificationCenter: AgentNotificationCenter,
+    private val fileAccess: FileAccessProvider
 ) : AgentWorkflow {
 
     private companion object {
@@ -108,6 +113,9 @@ class StatefulAgentWorkflow @Inject constructor(
         const val MODE_REMINDER_PLAN_FILE = "80-plan-mode.md"
         const val MODE_REMINDER_AUTO_FILE = "81-auto-mode.md"
         val LEADING_COMMENT = Regex("(?s)^\\s*<!--.*?-->\\s*")
+        /** 模型直出图片落盘目录（与 GenerateImageTool 保持一致）。 */
+        const val GENERATED_IMAGE_DIR = "~/.aicode/generated-images"
+        const val MAX_GENERATED_IMAGE_BYTES = 20L * 1024 * 1024
     }
 
     /** 不可变状态树 */
@@ -282,7 +290,8 @@ class StatefulAgentWorkflow @Inject constructor(
                     toolCalls = action.response.toolCalls,
                     reasoning = action.response.reasoning ?: "",
                     signature = action.response.signature ?: "",
-                    thinkingBlocksJson = action.response.thinkingBlocksJson ?: ""
+                    thinkingBlocksJson = action.response.thinkingBlocksJson ?: "",
+                    images = action.response.images
                 )
                 newState = state.copy(
                     messages = state.messages + assistantMsg,
@@ -546,6 +555,11 @@ class StatefulAgentWorkflow @Inject constructor(
                             flushPendingTextDelta()
                             flushPendingReasoningDelta()
                             val aiResponse = finalResponse ?: AIResponse(content = acc.toString())
+                            // 模型直出图片（Gemini 图像模型）不随流式增量到达，整块在 Final 里：
+                            // 先把 base64 落盘到 ~/.aicode/generated-images/ 并构造 UI 附件（只存路径不存 base64），
+                            // 再随 LlmResponse 把带 path 的 images 交 reduce 挂上 AssistantMessage 供下一回放。
+                            val (persistedImages, attachments) =
+                                if (aiResponse.images.isNotEmpty()) persistModelImages(aiResponse.images) else emptyList<AgentImage>() to emptyList()
                             callCompleted = true
                             keyRotator.reportSuccess(providerInUse.providerId, providerInUse.apiKey)
                             // 将本轮 reasoning 附加到 AIResponse，以便 reduce 时存入 AssistantMessage 并在下一轮回传
@@ -553,10 +567,27 @@ class StatefulAgentWorkflow @Inject constructor(
                                 aiResponse.copy(reasoning = reasoningAcc.toString())
                             } else aiResponse
 
-                            if (aiResponse.content.isNotBlank() || aiResponse.toolCalls.isNotEmpty()) {
-                                send(AgentEvent.AssistantText(aiResponse.content, aiResponse.toolCalls, reasoningAcc.toString(), aiResponse.signature ?: "", aiResponse.inputTokens, aiResponse.outputTokens, aiResponse.cachedInputTokens, aiResponse.thinkingBlocksJson ?: ""))
+                            if (aiResponse.content.isNotBlank() || aiResponse.toolCalls.isNotEmpty() || attachments.isNotEmpty()) {
+                                send(
+                                    AgentEvent.AssistantText(
+                                        aiResponse.content,
+                                        aiResponse.toolCalls,
+                                        reasoningAcc.toString(),
+                                        aiResponse.signature ?: "",
+                                        aiResponse.inputTokens,
+                                        aiResponse.outputTokens,
+                                        aiResponse.cachedInputTokens,
+                                        aiResponse.thinkingBlocksJson ?: "",
+                                        attachments = attachments
+                                    )
+                                )
                             }
-                            actionQueue.addLast(AgentAction.LlmResponse(responseWithReasoning))
+                            actionQueue.addLast(
+                                AgentAction.LlmResponse(
+                                    if (persistedImages.isNotEmpty()) responseWithReasoning.copy(images = persistedImages)
+                                    else responseWithReasoning
+                                )
+                            )
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: Exception) {
@@ -911,6 +942,47 @@ class StatefulAgentWorkflow @Inject constructor(
         } catch (e: Exception) {
             return ToolRunResult(ToolResult.Error("工具执行失败: ${e.message}", "TOOL_EXECUTION_FAILED").toTransportString(), true)
         }
+    }
+
+    /**
+     * 把模型直出的图片（base64）落盘到 `~/.aicode/generated-images/`，返回带容器路径的 images
+     * 与一一对应的 UI 附件（附件只带路径不含 base64，落库不撑爆数据库行）。
+     */
+    private suspend fun persistModelImages(images: List<AgentImage>): Pair<List<AgentImage>, List<AgentAttachment>> =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val persisted = mutableListOf<AgentImage>()
+            val attachments = mutableListOf<AgentAttachment>()
+            images.forEach { image ->
+                runCatching {
+                    val estimatedBytes = image.base64Data.length.toLong() * 3 / 4
+                    if (estimatedBytes > MAX_GENERATED_IMAGE_BYTES) return@runCatching
+                    val bytes = Base64.decode(image.base64Data, Base64.DEFAULT)
+                    if (bytes.isEmpty() || bytes.size > MAX_GENERATED_IMAGE_BYTES) return@runCatching
+                    val unique = "${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(8)}"
+                    val targetPath = "$GENERATED_IMAGE_DIR/gen_$unique.${extForMime(image.mimeType)}"
+                    fileAccess.writeBytes(targetPath, bytes, overwrite = false)
+                    val displayPath = fileAccess.toDisplayPath(targetPath)
+                    val localFile = fileAccess.copyToLocal(targetPath)
+                    persisted.add(image.copy(path = displayPath))
+                    attachments.add(
+                        AgentAttachment(
+                            fileName = targetPath.substringAfterLast('/'),
+                            containerPath = displayPath,
+                            localPath = localFile.absolutePath,
+                            mimeType = image.mimeType,
+                            sizeBytes = bytes.size.toLong(),
+                            isImage = true
+                        )
+                    )
+                }
+            }
+            persisted to attachments
+        }
+
+    private fun extForMime(mime: String): String = when (mime.lowercase()) {
+        "image/jpeg" -> "jpg"
+        "image/webp" -> "webp"
+        else -> "png"
     }
 
     private fun checkAndUpdateMode(toolCall: ToolCall, isError: Boolean, currentContext: AgentContext): Pair<AgentContext, Boolean> {

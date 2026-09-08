@@ -5,6 +5,7 @@ import com.aicode.feature.agent.data.remote.gemini.InteractionDelta
 import com.aicode.feature.agent.data.remote.gemini.InteractionEvent
 import com.aicode.feature.agent.data.remote.gemini.InteractionStep
 import com.aicode.feature.agent.data.remote.gemini.TERMINAL_STATUSES
+import com.aicode.feature.agent.domain.model.AgentImage
 import com.aicode.feature.agent.domain.tool.ToolCall
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
@@ -17,6 +18,8 @@ internal data class InteractionsOutput(
     val text: String = "",
     val reasoning: String = "",
     val toolCalls: List<ToolCall> = emptyList(),
+    /** 模型产出的图片（Nano Banana 图像模型），每个元素带 base64 数据；非图像模型恒为空。 */
+    val images: List<AgentImage> = emptyList(),
     /** 模型产出 step 的原样快照，下一轮无状态回放时原样回传；无需快照时为 null。 */
     val stepsSnapshotJson: String? = null
 )
@@ -54,6 +57,7 @@ internal fun parseInteractionSteps(steps: JsonArray?): InteractionsOutput {
     val text = StringBuilder()
     val reasoning = StringBuilder()
     val toolCalls = mutableListOf<ToolCall>()
+    val images = mutableListOf<AgentImage>()
     steps.forEach { element ->
         // 单个 step 解析失败不应废掉整个响应
         runCatching {
@@ -61,8 +65,9 @@ internal fun parseInteractionSteps(steps: JsonArray?): InteractionsOutput {
             when (step.str("type")) {
                 InteractionStep.MODEL_OUTPUT -> step.arr("content")?.forEach { block ->
                     val content = block.asJsonObject
-                    if (content.str("type") == InteractionContent.TEXT) {
-                        text.append(content.str("text").orEmpty())
+                    when (content.str("type")) {
+                        InteractionContent.TEXT -> text.append(content.str("text").orEmpty())
+                        InteractionContent.IMAGE -> content.toAgentImage()?.let { images.add(it) }
                     }
                 }
 
@@ -91,6 +96,7 @@ internal fun parseInteractionSteps(steps: JsonArray?): InteractionsOutput {
         text = text.toString(),
         reasoning = reasoning.toString(),
         toolCalls = toolCalls,
+        images = images,
         stepsSnapshotJson = snapshotInteractionSteps(steps)
     )
 }
@@ -188,6 +194,16 @@ internal class GeminiInteractionsStreamAccumulator {
                 step.str("name")?.takeIf { it.isNotBlank() }?.let { acc.name = it }
                 step.str("signature")?.let { acc.signature = it }
                 step.obj("arguments")?.let { acc.argsComplete = it.toString() }
+                // 兜底：部分实现直接在 step.start 的 content 里带完整正文（随后没有 delta），
+                // 此时文本增量拿不到正文。仅在尚未累积到时提取，避免与 delta 双写。
+                if (acc.text.isEmpty()) {
+                    step.arr("content")?.forEach { block ->
+                        val content = block.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
+                        if (content.str("type") == InteractionContent.TEXT) {
+                            acc.text.append(content.str("text").orEmpty())
+                        }
+                    }
+                }
             }
 
             eventType == InteractionEvent.STEP_DELTA -> {
@@ -261,6 +277,8 @@ internal class GeminiInteractionsStreamAccumulator {
     fun toResponse(): AIResponse {
         val streamed = buildStreamedOutput()
         val toolCalls = streamed.toolCalls.ifEmpty { finalOutput?.toolCalls.orEmpty() }
+        // 流式下图片整块到达（含 step.start 的完整载荷），不产生流式增量；终止事件里还有兜底解析。
+        val images = streamed.images.ifEmpty { finalOutput?.images.orEmpty() }
         return AIResponse(
             content = streamed.text.ifEmpty { finalOutput?.text.orEmpty() },
             toolCalls = toolCalls,
@@ -270,7 +288,8 @@ internal class GeminiInteractionsStreamAccumulator {
             thinkingBlocksJson = streamed.stepsSnapshotJson ?: finalOutput?.stepsSnapshotJson,
             inputTokens = usage.inputTokens,
             outputTokens = usage.outputTokens,
-            cachedInputTokens = usage.cachedInputTokens
+            cachedInputTokens = usage.cachedInputTokens,
+            images = images
         )
     }
 
@@ -283,11 +302,17 @@ internal class GeminiInteractionsStreamAccumulator {
         val text = StringBuilder()
         val reasoning = StringBuilder()
         val toolCalls = mutableListOf<ToolCall>()
+        val images = mutableListOf<AgentImage>()
         val rebuilt = mutableListOf<JsonObject>()
         steps.toSortedMap().values.forEach { acc ->
             when (acc.effectiveType()) {
                 InteractionStep.MODEL_OUTPUT -> {
                     text.append(acc.text)
+                    // step.start 的完整载荷里可能直接带 image content（图片不出流式增量，整块到达）。
+                    acc.raw?.arr("content")?.forEach { block ->
+                        val content = block.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
+                        if (content.str("type") == InteractionContent.IMAGE) content.toAgentImage()?.let { images.add(it) }
+                    }
                     rebuilt.add(modelOutputStep(acc.text.toString()))
                 }
 
@@ -312,6 +337,7 @@ internal class GeminiInteractionsStreamAccumulator {
             text = text.toString(),
             reasoning = reasoning.toString(),
             toolCalls = toolCalls,
+            images = images,
             stepsSnapshotJson = snapshotInteractionSteps(rebuilt)
         )
     }
@@ -351,6 +377,16 @@ private fun parseArgsOrNull(raw: String): kotlinx.serialization.json.JsonObject?
 
 private fun JsonObject.str(name: String): String? =
     get(name)?.takeIf { !it.isJsonNull && it.isJsonPrimitive }?.asString
+
+/** Interactions 的 image content block → [AgentImage]。data 缺失（异常响应）时返回 null。 */
+private fun JsonObject.toAgentImage(): AgentImage? {
+    val data = str("data").orEmpty()
+    if (data.isEmpty()) return null
+    return AgentImage(
+        mimeType = str("mime_type") ?: str("mimeType") ?: "image/png",
+        base64Data = data
+    )
+}
 
 private fun JsonObject.int(name: String): Int =
     get(name)?.takeIf { !it.isJsonNull && it.isJsonPrimitive }?.asInt ?: 0

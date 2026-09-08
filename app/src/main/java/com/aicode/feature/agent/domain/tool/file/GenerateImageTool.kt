@@ -1,14 +1,18 @@
 package com.aicode.feature.agent.domain.tool.file
 
 import android.util.Base64
+import com.aicode.core.util.AILogger
 import com.aicode.core.util.FileLogger
+import com.aicode.feature.agent.data.remote.gemini.GeminiApi
 import com.aicode.feature.agent.data.remote.openai.ImageGenerationRequest
 import com.aicode.feature.agent.data.remote.openai.ImageGenerationResponse
 import com.aicode.feature.agent.data.remote.openai.OpenAIApi
 import com.aicode.feature.agent.domain.model.AgentContext
 import com.aicode.feature.agent.domain.model.AgentImage
 import com.aicode.feature.agent.domain.provider.enrichWithHttpErrorBody
+import com.aicode.feature.agent.domain.provider.isApiKeyFailure
 import com.aicode.feature.agent.domain.provider.joinUrl
+import com.aicode.feature.agent.domain.provider.parseInteractionSteps
 import com.aicode.feature.agent.domain.provider.resolveCustomHeaders
 import com.aicode.feature.agent.domain.tool.AbstractContextualTool
 import com.aicode.feature.agent.domain.tool.ParameterType
@@ -18,6 +22,8 @@ import com.aicode.feature.agent.domain.tool.ToolParameter
 import com.aicode.feature.agent.domain.tool.ToolPermissionPolicy
 import com.aicode.feature.agent.domain.tool.ToolResult
 import com.aicode.feature.settings.data.repository.ImageGenModelSettingsRepository
+import com.aicode.feature.settings.data.repository.ProviderKeyRotator
+import com.aicode.feature.settings.domain.model.ProviderType
 import com.aicode.feature.settings.domain.repository.AIProviderRepository
 import com.aicode.feature.workspace.domain.FileAccessProvider
 import kotlinx.coroutines.CancellationException
@@ -32,10 +38,9 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.io.ByteArrayOutputStream
 import java.io.IOException
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import java.util.UUID
 import javax.inject.Inject
 
 /**
@@ -54,7 +59,9 @@ class GenerateImageTool @Inject constructor(
     private val imageGenModelSettingsRepository: ImageGenModelSettingsRepository,
     private val aiProviderRepository: AIProviderRepository,
     private val openAIApi: OpenAIApi,
-    private val httpClient: OkHttpClient
+    private val geminiApi: GeminiApi,
+    private val httpClient: OkHttpClient,
+    private val keyRotator: ProviderKeyRotator
 ) : AbstractContextualTool() {
 
     override val name = "generateImage"
@@ -84,31 +91,36 @@ class GenerateImageTool @Inject constructor(
             name = "quality",
             type = ParameterType.STRING,
             description = "画质：GPT Image 系列支持 low / medium / high / auto（默认 auto）；dall-e-3 支持 standard / hd（默认 standard）。",
-            required = false
+            required = false,
+            enum = listOf("low", "medium", "high", "auto", "standard", "hd")
         ),
         "background" to ToolParameter(
             name = "background",
             type = ParameterType.STRING,
             description = "背景：transparent / opaque / auto（默认 auto），仅 GPT Image 系列模型支持；transparent 需配合 png 或 webp 输出格式。",
-            required = false
+            required = false,
+            enum = listOf("transparent", "opaque", "auto")
         ),
         "moderation" to ToolParameter(
             name = "moderation",
             type = ParameterType.STRING,
             description = "内容审核级别：low / auto（默认 auto），仅 GPT Image 系列模型支持。",
-            required = false
+            required = false,
+            enum = listOf("low", "auto")
         ),
         "style" to ToolParameter(
             name = "style",
             type = ParameterType.STRING,
             description = "风格：vivid / natural，仅 dall-e-3 支持。",
-            required = false
+            required = false,
+            enum = listOf("vivid", "natural")
         ),
         "output_format" to ToolParameter(
             name = "output_format",
             type = ParameterType.STRING,
             description = "输出格式：png / jpeg / webp（默认 png），仅 GPT Image 系列模型支持。",
-            required = false
+            required = false,
+            enum = listOf("png", "jpeg", "webp")
         ),
         "output_path" to ToolParameter(
             name = "output_path",
@@ -132,7 +144,7 @@ class GenerateImageTool @Inject constructor(
             title = "确认生成图片",
             summary = "AI 请求调用生图模型生成图片",
             details = if (outputPath.isBlank()) {
-                "提示词：$prompt\n数量：$count\n（仅展示，不保存文件）"
+                "提示词：$prompt\n数量：$count\n保存到：$DEFAULT_OUTPUT_DIR/"
             } else {
                 "提示词：$prompt\n数量：$count\n保存到：$outputPath"
             },
@@ -143,29 +155,47 @@ class GenerateImageTool @Inject constructor(
     override suspend fun executeWithContext(
         args: Map<String, JsonElement>,
         context: AgentContext
-    ): ToolResult {
+    ): ToolResult = withContext(Dispatchers.IO) {
         val prompt = args["prompt"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
         if (prompt.isEmpty()) {
-            return ToolResult.Error("缺少 prompt 参数：请描述想生成的图片内容。", "MISSING_PROMPT")
+            return@withContext ToolResult.Error("缺少 prompt 参数：请描述想生成的图片内容。", "MISSING_PROMPT")
         }
         val size = args["size"]?.jsonPrimitive?.contentOrNull?.trim()?.ifBlank { null }
             ?: DEFAULT_SIZE
-        val n = (args["n"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: 1).coerceIn(1, MAX_IMAGES)
-        val quality = args["quality"]?.jsonPrimitive?.contentOrNull?.trim()?.ifBlank { null }
-        val background = args["background"]?.jsonPrimitive?.contentOrNull?.trim()?.ifBlank { null }
-        val moderation = args["moderation"]?.jsonPrimitive?.contentOrNull?.trim()?.ifBlank { null }
-        val style = args["style"]?.jsonPrimitive?.contentOrNull?.trim()?.ifBlank { null }
-        val outputFormat = args["output_format"]?.jsonPrimitive?.contentOrNull?.trim()?.ifBlank { null }
+        val n = args["n"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: 1
+        if (n !in 1..MAX_IMAGES) {
+            return@withContext ToolResult.Error("n 取值必须在 1 到 $MAX_IMAGES 之间，当前为 $n。", "INVALID_PARAMS")
+        }
+        val quality = args["quality"]?.jsonPrimitive?.contentOrNull?.trim()?.lowercase()?.ifBlank { null }
+        val background = args["background"]?.jsonPrimitive?.contentOrNull?.trim()?.lowercase()?.ifBlank { null }
+        val moderation = args["moderation"]?.jsonPrimitive?.contentOrNull?.trim()?.lowercase()?.ifBlank { null }
+        val style = args["style"]?.jsonPrimitive?.contentOrNull?.trim()?.lowercase()?.ifBlank { null }
+        val outputFormat = args["output_format"]?.jsonPrimitive?.contentOrNull?.trim()?.lowercase()?.ifBlank { null }
         val outputPath = args["output_path"]?.jsonPrimitive?.contentOrNull?.trim()?.ifBlank { null }
 
-        return try {
+        var seq = 0
+        var lastProviderId = ""
+        var activeApiKey = ""
+        return@withContext try {
             val provider = resolveImageGenProvider()
+            lastProviderId = provider.id
+            activeApiKey = keyRotator.activeKey(provider, context.sessionId) ?: provider.firstUsableApiKey
             val model = provider.effectiveModel
+            // Gemini 官方图像模型走 Interactions 协议（v1beta/interactions），OpenAI 的
+            // /v1/images/generations 端点打不通；设了 Gemini 生图模型时切独立通道，
+            // OpenAI 特有的参数（size/quality/background 等）在 Gemini 分支里忽略。
+            if (provider.type == ProviderType.GEMINI) {
+                return@withContext generateViaGemini(provider, activeApiKey, prompt, n, outputPath, context.sessionId)
+            }
             val isGptImage = model.startsWith("gpt-image", ignoreCase = true)
             val isDalle2 = model.equals("dall-e-2", ignoreCase = true)
             val isDalle3 = model.equals("dall-e-3", ignoreCase = true)
-            validateImageParams(model, isGptImage, isDalle2, isDalle3, n, quality, background, moderation, style, outputFormat)?.let {
-                return ToolResult.Error(it, "INVALID_PARAMS")
+            GenerateImageTool.validateImageParams(
+                model, isGptImage, isDalle2, isDalle3, n, quality,
+                background, moderation, style, outputFormat
+            )
+?.let {
+                return@withContext ToolResult.Error(it, "INVALID_PARAMS")
             }
             FileLogger.i(TAG, "generateImage provider=${provider.id} model=$model prompt=$prompt n=$n size=$size")
 
@@ -187,18 +217,26 @@ class GenerateImageTool @Inject constructor(
                 style = if (isDalle3) style else null
             )
 
+            seq = AILogger.logRequest(context.sessionId, provider.id, model, "POST", url, request)
+
             val response = openAIApi.createImage(
                 url = url,
-                authorization = "Bearer ${provider.firstUsableApiKey}",
-                extraHeaders = resolveCustomHeaders(provider.customHeaders, context.sessionId, provider.firstUsableApiKey),
+                authorization = "Bearer $activeApiKey",
+                extraHeaders = resolveCustomHeaders(provider.customHeaders, context.sessionId, activeApiKey),
                 request = request
             )
+            keyRotator.reportSuccess(provider.id, activeApiKey)
+            AILogger.logResponse(context.sessionId, provider.id, response, seq)
             buildSuccess(response, n, outputPath, model)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             val enriched = e.enrichWithHttpErrorBody()
+            if (activeApiKey.isNotEmpty() && enriched.isApiKeyFailure()) {
+                keyRotator.reportFailure(lastProviderId, context.sessionId, activeApiKey)
+            }
             FileLogger.e(TAG, "generateImage 失败", enriched)
+            AILogger.logError(context.sessionId, lastProviderId, enriched, seq)
             ToolResult.Error(enriched.message ?: "生图调用失败", "IMAGE_GEN_FAILED")
         }
     }
@@ -225,112 +263,401 @@ class GenerateImageTool @Inject constructor(
         if (response.data.isEmpty()) {
             return ToolResult.Error("生图服务未返回任何图片数据", "EMPTY_RESULT")
         }
-        val isDefaultDir = outputPath == null
-        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-        val effectiveBasePath = outputPath ?: "$DEFAULT_OUTPUT_DIR/gen_$timestamp"
+        val effectiveBasePath = outputPath ?: createDefaultBasePath()
+        val overwrite = outputPath != null
 
         val agentImages = mutableListOf<AgentImage>()
         val savedDisplayPaths = mutableListOf<String>()
         val filesList = mutableListOf<JsonObject>()
-        var itemIndex = 0
-        for (item in response.data) {
-            val base64 = if (!item.b64_json.isNullOrBlank()) {
-                item.b64_json
-            } else if (!item.url.isNullOrBlank()) {
-                // 服务端只返回了 URL 时，自动下载并转为 base64，彻底保证在 UI 中渲染和落盘
-                try {
-                    downloadImageAsBase64(item.url)
-                } catch (e: Exception) {
-                    FileLogger.w(TAG, "从 URL 下载生图结果失败: ${item.url}", e)
-                    null
+        var totalBytes = 0L
+        var failedCount = 0
+        response.data.forEachIndexed { index, item ->
+            try {
+                val bytes: ByteArray
+                val base64: String
+                when {
+                    !item.b64_json.isNullOrBlank() -> {
+                        base64 = item.b64_json
+                        bytes = decodeImageBase64(base64)
+                    }
+                    !item.url.isNullOrBlank() -> {
+                        bytes = downloadImageBytes(item.url)
+                        base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                    }
+                    else -> throw IOException("结果中缺少 base64 与 URL")
                 }
-            } else {
-                null
-            } ?: continue
-
-            val bytes = Base64.decode(base64, Base64.DEFAULT)
-            val format = detectImageFormat(bytes)
-            val targetPath = buildTargetPath(effectiveBasePath, itemIndex, format)
-            val realMime = mimeForFormat(format)
-            fileAccess.writeBytes(targetPath, bytes, overwrite = true)
-            val displayPath = fileAccess.toDisplayPath(targetPath)
-            val localFile = fileAccess.copyToLocal(targetPath)
-            val fileName = targetPath.substringAfterLast('/')
-
-            agentImages.add(
-                AgentImage(
-                    mimeType = realMime,
-                    base64Data = base64,
-                    path = displayPath
+                totalBytes = checkedTotalBytes(totalBytes, bytes.size)
+                persistImageBytes(
+                    bytes, base64, effectiveBasePath, overwrite,
+                    agentImages, savedDisplayPaths, filesList
                 )
-            )
-            savedDisplayPaths.add(displayPath)
-
-            filesList.add(
-                JsonObject(
-                    mapOf(
-                        "path" to JsonPrimitive(displayPath),
-                        "local_path" to JsonPrimitive(localFile.absolutePath),
-                        "name" to JsonPrimitive(fileName),
-                        "mime_type" to JsonPrimitive(realMime),
-                        "size_bytes" to JsonPrimitive(bytes.size.toLong()),
-                        "is_image" to JsonPrimitive(true)
-                    )
-                )
-            )
-            itemIndex++
+            } catch (e: Exception) {
+                failedCount++
+                FileLogger.w(TAG, "处理第 ${index + 1} 张生图结果失败", e)
+            }
         }
 
         if (agentImages.isEmpty()) {
-            return ToolResult.Error("未能获取到生成的图片内容（base64 与 URL 均无效）", "EMPTY_RESULT")
+            return ToolResult.Error("未能获取到生成的图片内容（图片无效、过大或下载失败）", "EMPTY_RESULT")
         }
-
-        val content = buildString {
-            append("已生成 ${agentImages.size} 张图片")
-            if (isDefaultDir) {
-                append("，已保存至 $DEFAULT_OUTPUT_DIR/：")
-            } else {
-                append("，已保存至指定路径：")
-            }
-            savedDisplayPaths.forEach { p -> append("\n- ").append(p) }
-        }
-        return ToolResult.Success(
-            data = JsonObject(
-                mapOf(
-                    "status" to JsonPrimitive("generated"),
-                    "content" to JsonPrimitive(content),
-                    "image_count" to JsonPrimitive(agentImages.size),
-                    "model" to JsonPrimitive(model),
-                    "requested_count" to JsonPrimitive(requestedN),
-                    "usage" to (response.usage?.let { u ->
-                        JsonObject(
-                            mapOf(
-                                "input_tokens" to JsonPrimitive(u.input_tokens),
-                                "output_tokens" to JsonPrimitive(u.output_tokens),
-                                "total_tokens" to JsonPrimitive(u.total_tokens)
-                            )
-                        )
-                    } ?: JsonNull),
-                    "files" to JsonArray(filesList)
-                )
-            ),
-            images = agentImages
+        return buildImageResult(
+            agentImages, savedDisplayPaths, filesList, model, requestedN,
+            outputPath, failedCount, usage = response.usage
         )
     }
 
-    private suspend fun downloadImageAsBase64(url: String): String = withContext(Dispatchers.IO) {
+    /**
+     * Gemini 生图通道：跟随 provider 的 useResponseApi 设置。开启走 Interactions 非流式端点
+     * （从 `steps` 时间线解析图片）；关闭（默认）走 generateContent（图像模型原生支持，从
+     * candidates[].parts 的 inlineData 解析）。多张走多次调用；OpenAI 特有参数忽略。
+     */
+    private suspend fun generateViaGemini(
+        provider: com.aicode.feature.settings.domain.model.AIProviderConfig,
+        apiKey: String,
+        prompt: String,
+        n: Int,
+        outputPath: String?,
+        sessionId: String?
+    ): ToolResult {
+        val model = provider.effectiveModel
+        FileLogger.i(TAG, "generateImage(Gemini) provider=${provider.id} model=$model prompt=$prompt n=$n")
+        return if (provider.useResponseApi) {
+            generateViaGeminiInteractions(provider, apiKey, model, prompt, n, outputPath, sessionId)
+        } else {
+            generateViaGeminiGenerateContent(provider, apiKey, model, prompt, n, outputPath, sessionId)
+        }
+    }
+
+    /** Interactions 通道：非流式 createInteraction，从响应 steps 提取图片。 */
+    private suspend fun generateViaGeminiInteractions(
+        provider: com.aicode.feature.settings.domain.model.AIProviderConfig,
+        apiKey: String,
+        model: String,
+        prompt: String,
+        n: Int,
+        outputPath: String?,
+        sessionId: String?
+    ): ToolResult {
+        val url = if (provider.useFullUrl) provider.baseUrl else joinUrl(provider.baseUrl, "v1beta/interactions")
+        val effectiveBasePath = outputPath ?: createDefaultBasePath()
+        val overwrite = outputPath != null
+
+        val agentImages = mutableListOf<AgentImage>()
+        val savedDisplayPaths = mutableListOf<String>()
+        val filesList = mutableListOf<JsonObject>()
+        var totalBytes = 0L
+        var failedCount = 0
+        var lastSeq = 0
+        try {
+            for (index in 0 until n) {
+                val request = mapOf("model" to model, "input" to prompt, "store" to false)
+                lastSeq = AILogger.logRequest(sessionId, provider.id, model, "POST", url, request)
+                val response = geminiApi.createInteraction(
+                    url = url,
+                    apiKey = apiKey,
+                    extraHeaders = resolveCustomHeaders(provider.customHeaders, sessionId, apiKey),
+                    request = request
+                )
+                keyRotator.reportSuccess(provider.id, apiKey)
+                AILogger.logResponse(sessionId, provider.id, response, lastSeq)
+                val status = response.get("status")?.takeIf { it.isJsonPrimitive }?.asString
+                if (status == "failed" || status == "cancelled" || status == "budget_exceeded") {
+                    val reason = response.get("errors")?.takeIf { it.isJsonArray }?.asJsonArray
+                        ?.firstOrNull()?.takeIf { it.isJsonObject }?.asJsonObject
+                        ?.get("message")?.takeIf { it.isJsonPrimitive }?.asString
+                        ?: "Gemini 生图失败（status=$status）"
+                    failedCount += n - index
+                    return if (agentImages.isEmpty()) {
+                        ToolResult.Error(reason, "IMAGE_GEN_FAILED")
+                    } else {
+                        buildGeminiResult(agentImages, savedDisplayPaths, filesList, model, n, outputPath, failedCount, reason)
+                    }
+                }
+                val beforeCount = agentImages.size
+                val parsed = parseInteractionSteps(response.get("steps")?.takeIf { it.isJsonArray }?.asJsonArray)
+                parsed.images.forEach { image ->
+                    runCatching {
+                        totalBytes += persistImage(
+                            image.base64Data, effectiveBasePath, overwrite, agentImages,
+                            savedDisplayPaths, filesList, totalBytes
+                        )
+                    }.onFailure { FileLogger.w(TAG, "处理 Gemini 生图结果失败", it) }
+                }
+                if (agentImages.size == beforeCount) failedCount++
+                if (index == 0 && agentImages.isEmpty() && n > 1) break
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            val enriched = e.enrichWithHttpErrorBody()
+            if (enriched.isApiKeyFailure()) keyRotator.reportFailure(provider.id, sessionId, apiKey)
+            FileLogger.e(TAG, "generateImage(Gemini) 失败", enriched)
+            AILogger.logError(sessionId, provider.id, enriched, lastSeq)
+            if (agentImages.isNotEmpty()) {
+                return buildGeminiResult(
+                    agentImages, savedDisplayPaths, filesList, model, n, outputPath,
+                    failedCount.coerceAtLeast(n - agentImages.size), enriched.message
+                )
+            }
+            return ToolResult.Error(enriched.message ?: "Gemini 生图调用失败", "IMAGE_GEN_FAILED")
+        }
+
+        return buildGeminiResult(agentImages, savedDisplayPaths, filesList, model, n, outputPath, failedCount)
+    }
+
+    /**
+     * generateContent 通道：图像模型（Nano Banana）原生支持该端点，图片在
+     * candidates[].content.parts 的 inlineData（camelCase）中整块返回。
+     */
+    private suspend fun generateViaGeminiGenerateContent(
+        provider: com.aicode.feature.settings.domain.model.AIProviderConfig,
+        apiKey: String,
+        model: String,
+        prompt: String,
+        n: Int,
+        outputPath: String?,
+        sessionId: String?
+    ): ToolResult {
+        val url = if (provider.useFullUrl) provider.baseUrl else joinUrl(provider.baseUrl, "v1beta/models/$model:generateContent")
+        val effectiveBasePath = outputPath ?: createDefaultBasePath()
+        val overwrite = outputPath != null
+
+        val agentImages = mutableListOf<AgentImage>()
+        val savedDisplayPaths = mutableListOf<String>()
+        val filesList = mutableListOf<JsonObject>()
+        var totalBytes = 0L
+        var failedCount = 0
+        var lastSeq = 0
+        try {
+            for (index in 0 until n) {
+                val request = mapOf(
+                    "contents" to listOf(mapOf("parts" to listOf(mapOf("text" to prompt))))
+                )
+                lastSeq = AILogger.logRequest(sessionId, provider.id, model, "POST", url, request)
+                val response = geminiApi.generateContent(
+                    url = url,
+                    apiKey = apiKey,
+                    extraHeaders = resolveCustomHeaders(provider.customHeaders, sessionId, apiKey),
+                    request = request
+                )
+                keyRotator.reportSuccess(provider.id, apiKey)
+                AILogger.logResponse(sessionId, provider.id, response, lastSeq)
+                val beforeCount = agentImages.size
+                extractGenerateContentImageData(response).forEach { base64 ->
+                    runCatching {
+                        totalBytes += persistImage(
+                            base64, effectiveBasePath, overwrite, agentImages,
+                            savedDisplayPaths, filesList, totalBytes
+                        )
+                    }.onFailure { FileLogger.w(TAG, "处理 Gemini 生图结果失败", it) }
+                }
+                if (agentImages.size == beforeCount) failedCount++
+                if (index == 0 && agentImages.isEmpty() && n > 1) break
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            val enriched = e.enrichWithHttpErrorBody()
+            if (enriched.isApiKeyFailure()) keyRotator.reportFailure(provider.id, sessionId, apiKey)
+            FileLogger.e(TAG, "generateImage(Gemini) 失败", enriched)
+            AILogger.logError(sessionId, provider.id, enriched, lastSeq)
+            if (agentImages.isNotEmpty()) {
+                return buildGeminiResult(
+                    agentImages, savedDisplayPaths, filesList, model, n, outputPath,
+                    failedCount.coerceAtLeast(n - agentImages.size), enriched.message
+                )
+            }
+            return ToolResult.Error(enriched.message ?: "Gemini 生图调用失败", "IMAGE_GEN_FAILED")
+        }
+
+        return buildGeminiResult(agentImages, savedDisplayPaths, filesList, model, n, outputPath, failedCount)
+    }
+
+    /** 从 generateContent 响应提取图片 base64 列表（inlineData / inline_data 都认）。 */
+    private fun extractGenerateContentImageData(response: com.google.gson.JsonObject): List<String> {
+        val parts = response.get("candidates")?.takeIf { it.isJsonArray }?.asJsonArray
+            ?.firstOrNull()?.takeIf { it.isJsonObject }?.asJsonObject
+            ?.get("content")?.takeIf { it.isJsonObject }?.asJsonObject
+            ?.get("parts")?.takeIf { it.isJsonArray }?.asJsonArray
+            ?: return emptyList()
+        return parts.mapNotNull { partEl ->
+            val part = partEl.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
+            val inline = part.get("inlineData") ?: part.get("inline_data")
+            (inline?.takeIf { it.isJsonObject }?.asJsonObject)?.get("data")
+                ?.takeIf { it.isJsonPrimitive }?.asString
+                ?.takeIf { it.isNotBlank() }
+        }
+    }
+
+    /** 单张图落盘：base64 → 按真实格式写文件 → 组装 AgentImage 与 files 附件。 */
+    private fun persistImage(
+        base64: String,
+        effectiveBasePath: String,
+        overwrite: Boolean,
+        agentImages: MutableList<AgentImage>,
+        savedDisplayPaths: MutableList<String>,
+        filesList: MutableList<JsonObject>,
+        currentTotalBytes: Long
+    ): Long {
+        val bytes = decodeImageBase64(base64)
+        checkedTotalBytes(currentTotalBytes, bytes.size)
+        persistImageBytes(
+            bytes, base64, effectiveBasePath, overwrite,
+            agentImages, savedDisplayPaths, filesList
+        )
+        return bytes.size.toLong()
+    }
+
+    private fun persistImageBytes(
+        bytes: ByteArray,
+        base64: String,
+        effectiveBasePath: String,
+        overwrite: Boolean,
+        agentImages: MutableList<AgentImage>,
+        savedDisplayPaths: MutableList<String>,
+        filesList: MutableList<JsonObject>
+    ) {
+        if (bytes.isEmpty()) throw IOException("图片内容为空")
+        val format = detectImageFormat(bytes)
+        val targetPath = buildTargetPath(effectiveBasePath, agentImages.size, format)
+        val realMime = mimeForFormat(format)
+        fileAccess.writeBytes(targetPath, bytes, overwrite = overwrite)
+        val displayPath = fileAccess.toDisplayPath(targetPath)
+        val localFile = fileAccess.copyToLocal(targetPath)
+        val fileName = targetPath.substringAfterLast('/')
+
+        agentImages.add(AgentImage(mimeType = realMime, base64Data = base64, path = displayPath))
+        savedDisplayPaths.add(displayPath)
+        filesList.add(
+            JsonObject(
+                mapOf(
+                    "path" to JsonPrimitive(displayPath),
+                    "local_path" to JsonPrimitive(localFile.absolutePath),
+                    "name" to JsonPrimitive(fileName),
+                    "mime_type" to JsonPrimitive(realMime),
+                    "size_bytes" to JsonPrimitive(bytes.size.toLong()),
+                    "is_image" to JsonPrimitive(true)
+                )
+            )
+        )
+    }
+
+    /** 组装 Gemini 生图的统一结果（两通道共用）。 */
+    private fun buildGeminiResult(
+        agentImages: List<AgentImage>,
+        savedDisplayPaths: List<String>,
+        filesList: List<JsonObject>,
+        model: String,
+        n: Int,
+        outputPath: String?,
+        failedCount: Int,
+        failureReason: String? = null
+    ): ToolResult {
+        if (agentImages.isEmpty()) {
+            return ToolResult.Error("Gemini 生图未返回图片数据（模型可能只回复了文本，或图片无效或过大）", "EMPTY_RESULT")
+        }
+        return buildImageResult(
+            agentImages, savedDisplayPaths, filesList, model, n,
+            outputPath, failedCount, failureReason
+        )
+    }
+
+    private fun buildImageResult(
+        agentImages: List<AgentImage>,
+        savedDisplayPaths: List<String>,
+        filesList: List<JsonObject>,
+        model: String,
+        requestedCount: Int,
+        outputPath: String?,
+        failedCount: Int,
+        failureReason: String? = null,
+        usage: com.aicode.feature.agent.data.remote.openai.ImageGenerationUsage? = null
+    ): ToolResult {
+        val effectiveFailedCount = failedCount.coerceAtLeast(0)
+        val content = buildString {
+            append("已生成 ${agentImages.size} 张图片")
+            if (effectiveFailedCount > 0) append("，另有 $effectiveFailedCount 张失败")
+            if (!failureReason.isNullOrBlank()) append("（").append(failureReason).append("）")
+            if (outputPath == null) append("，已保存至 $DEFAULT_OUTPUT_DIR/：")
+            else append("，已保存至指定路径：")
+            savedDisplayPaths.forEach { p -> append("\n- ").append(p) }
+        }
+        val data = mutableMapOf<String, JsonElement>(
+            "status" to JsonPrimitive(if (effectiveFailedCount > 0) "partial" else "generated"),
+            "content" to JsonPrimitive(content),
+            "image_count" to JsonPrimitive(agentImages.size),
+            "failed_count" to JsonPrimitive(effectiveFailedCount),
+            "model" to JsonPrimitive(model),
+            "requested_count" to JsonPrimitive(requestedCount),
+            "files" to JsonArray(filesList)
+        )
+        data["usage"] = usage?.let { value ->
+            JsonObject(
+                mapOf(
+                    "input_tokens" to JsonPrimitive(value.input_tokens),
+                    "output_tokens" to JsonPrimitive(value.output_tokens),
+                    "total_tokens" to JsonPrimitive(value.total_tokens)
+                )
+            )
+        } ?: JsonNull
+        return ToolResult.Success(JsonObject(data), images = agentImages)
+    }
+
+    private fun downloadImageBytes(url: String): ByteArray {
         val req = Request.Builder().url(url).build()
         httpClient.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) throw IOException("下载图片失败 HTTP ${resp.code}: $url")
             val body = resp.body ?: throw IOException("图片响应体为空: $url")
-            val bytes = body.bytes()
-            Base64.encodeToString(bytes, Base64.NO_WRAP)
+            val contentLength = body.contentLength()
+            if (contentLength > MAX_IMAGE_BYTES) {
+                throw IOException("图片超过 ${MAX_IMAGE_BYTES / 1024 / 1024}MB 限制")
+            }
+            val initialSize = contentLength.takeIf { it in 1..MAX_IMAGE_BYTES }?.toInt() ?: DEFAULT_BUFFER_SIZE
+            val output = ByteArrayOutputStream(initialSize)
+            body.byteStream().use { input ->
+                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                var total = 0L
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    total += read
+                    if (total > MAX_IMAGE_BYTES) {
+                        throw IOException("图片超过 ${MAX_IMAGE_BYTES / 1024 / 1024}MB 限制")
+                    }
+                    output.write(buffer, 0, read)
+                }
+            }
+            return output.toByteArray()
         }
     }
 
-    /** 输出路径派生：去掉调用方后缀、按真实格式落盘，多张在文件名后加 _1/_2 序号。 */
+    private fun decodeImageBase64(base64: String): ByteArray {
+        if (estimatedDecodedBytes(base64.length) > MAX_IMAGE_BYTES) {
+            throw IOException("图片超过 ${MAX_IMAGE_BYTES / 1024 / 1024}MB 限制")
+        }
+        val bytes = Base64.decode(base64, Base64.DEFAULT)
+        if (bytes.size > MAX_IMAGE_BYTES) {
+            throw IOException("图片超过 ${MAX_IMAGE_BYTES / 1024 / 1024}MB 限制")
+        }
+        return bytes
+    }
+
+    private fun checkedTotalBytes(current: Long, additional: Int): Long {
+        val total = current + additional
+        if (total > MAX_TOTAL_IMAGE_BYTES) {
+            throw IOException("本次图片总大小超过 ${MAX_TOTAL_IMAGE_BYTES / 1024 / 1024}MB 限制")
+        }
+        return total
+    }
+
+    private fun createDefaultBasePath(): String =
+        "$DEFAULT_OUTPUT_DIR/gen_${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(8)}"
+
+    /** 输出路径派生：去掉调用方后缀、按真实格式落盘，多张在文件名后加 _1/_2 序号。
+     * 扩展名点只在最后一个路径分隔符之后找：`~/.aicode/...` 这类路径自身的点不能当扩展名分隔符。 */
     private fun buildTargetPath(basePath: String, index: Int, format: String): String {
-        val dot = basePath.lastIndexOf('.')
+        val slash = basePath.lastIndexOf('/')
+        val dot = basePath.lastIndexOf('.', basePath.length - 1).takeIf { it > slash } ?: -1
         val base = if (dot > 0) basePath.substring(0, dot) else basePath
         val suffix = if (index == 0) "" else "_${index + 1}"
         return "$base$suffix.${extForFormat(format)}"
@@ -362,46 +689,57 @@ class GenerateImageTool @Inject constructor(
 
     private fun extForFormat(format: String): String = if (format == FORMAT_JPEG) "jpg" else format
 
-    /** 按官方模型参数约束做前置校验，避免参数组合不匹配直接撞网关 HTTP 400。错误信息带模型名，方便定位。 */
-    private fun validateImageParams(
-        model: String,
-        isGptImage: Boolean,
-        isDalle2: Boolean,
-        isDalle3: Boolean,
-        n: Int,
-        quality: String?,
-        background: String?,
-        moderation: String?,
-        style: String?,
-        outputFormat: String?
-    ): String? {
-        if (!isGptImage && background != null) return "background 参数仅 GPT Image 系列模型支持，当前模型 $model 不支持。"
-        if (!isGptImage && moderation != null) return "moderation 参数仅 GPT Image 系列模型支持，当前模型 $model 不支持。"
-        if (!isGptImage && outputFormat != null) return "output_format 参数仅 GPT Image 系列模型支持，当前模型 $model 不支持。"
-        if (!isDalle3 && style != null) return "style 参数仅 dall-e-3 支持，当前模型 $model 不支持。"
-        if (isDalle3 && n > 1) return "dall-e-3 一次只能生成 1 张（n=1），需要多张请改用 GPT Image 系列模型。"
-        if (quality != null) {
-            val allowed = when {
-                isGptImage -> QUALITY_GPT_IMAGE
-                isDalle3 -> QUALITY_DALLE3
-                isDalle2 -> QUALITY_DALLE2
-                else -> return "quality 参数仅 OpenAI 官方生图模型（gpt-image 系列 / dall-e-2 / dall-e-3）支持，当前模型 $model 不支持。"
-            }
-            if (quality !in allowed) return "quality 取值 $quality 当前模型 $model 不支持，可选：${allowed.joinToString(" / ")}。"
-        }
-        return null
-    }
-
-    private companion object {
+    internal companion object {
         const val TAG = "GenerateImageTool"
         const val DEFAULT_OUTPUT_DIR = "~/.aicode/generated-images"
         const val DEFAULT_SIZE = "1024x1024"
         const val MAX_IMAGES = 4
+        const val MAX_IMAGE_BYTES = 20L * 1024 * 1024
+        const val MAX_TOTAL_IMAGE_BYTES = 48L * 1024 * 1024
         const val FORMAT_PNG = "png"
         const val FORMAT_JPEG = "jpeg"
         const val FORMAT_WEBP = "webp"
         val QUALITY_GPT_IMAGE = setOf("low", "medium", "high", "auto")
         val QUALITY_DALLE3 = setOf("standard", "hd")
         val QUALITY_DALLE2 = setOf("standard")
+        val BACKGROUNDS = setOf("transparent", "opaque", "auto")
+        val MODERATIONS = setOf("low", "auto")
+        val STYLES = setOf("vivid", "natural")
+        val OUTPUT_FORMATS = setOf("png", "jpeg", "webp")
+
+        internal fun validateImageParams(
+            model: String,
+            isGptImage: Boolean,
+            isDalle2: Boolean,
+            isDalle3: Boolean,
+            n: Int,
+            quality: String?,
+            background: String?,
+            moderation: String?,
+            style: String?,
+            outputFormat: String?
+        ): String? {
+            if (background != null && background !in BACKGROUNDS) return "background 取值 $background 不支持，可选：${BACKGROUNDS.joinToString(" / ")}。"
+            if (moderation != null && moderation !in MODERATIONS) return "moderation 取值 $moderation 不支持，可选：${MODERATIONS.joinToString(" / ")}。"
+            if (style != null && style !in STYLES) return "style 取值 $style 不支持，可选：${STYLES.joinToString(" / ")}。"
+            if (outputFormat != null && outputFormat !in OUTPUT_FORMATS) return "output_format 取值 $outputFormat 不支持，可选：${OUTPUT_FORMATS.joinToString(" / ")}。"
+            if (!isGptImage && background != null) return "background 参数仅 GPT Image 系列模型支持，当前模型 $model 不支持。"
+            if (!isGptImage && moderation != null) return "moderation 参数仅 GPT Image 系列模型支持，当前模型 $model 不支持。"
+            if (!isGptImage && outputFormat != null) return "output_format 参数仅 GPT Image 系列模型支持，当前模型 $model 不支持。"
+            if (!isDalle3 && style != null) return "style 参数仅 dall-e-3 支持，当前模型 $model 不支持。"
+            if (isDalle3 && n > 1) return "dall-e-3 一次只能生成 1 张（n=1），需要多张请改用 GPT Image 系列模型。"
+            if (quality != null) {
+                val allowed = when {
+                    isGptImage -> QUALITY_GPT_IMAGE
+                    isDalle3 -> QUALITY_DALLE3
+                    isDalle2 -> QUALITY_DALLE2
+                    else -> return "quality 参数仅 OpenAI 官方生图模型（gpt-image 系列 / dall-e-2 / dall-e-3）支持，当前模型 $model 不支持。"
+                }
+                if (quality !in allowed) return "quality 取值 $quality 当前模型 $model 不支持，可选：${allowed.joinToString(" / ")}。"
+            }
+            return null
+        }
+
+        internal fun estimatedDecodedBytes(base64Length: Int): Long = base64Length.toLong() * 3 / 4
     }
 }

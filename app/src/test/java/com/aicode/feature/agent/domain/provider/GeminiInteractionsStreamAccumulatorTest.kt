@@ -234,4 +234,53 @@ class GeminiInteractionsStreamAccumulatorTest {
         )
         assertEquals(5, acc.toResponse().inputTokens)
     }
+
+    @Test
+    fun parse_steps_extracts_image_blocks_from_model_output() {
+        val steps = JsonParser.parseString(
+            """
+            [{'type':'model_output','content':[
+              {'type':'text','text':'画好了'},
+              {'type':'image','mime_type':'image/png','data':'AAAABB=='}]}]
+            """.trimIndent().replace('\'', '"')
+        ).asJsonArray
+        val output = parseInteractionSteps(steps)
+        assertEquals("画好了", output.text)
+        assertEquals(1, output.images.size)
+        assertEquals("image/png", output.images[0].mimeType)
+        assertEquals("AAAABB==", output.images[0].base64Data)
+    }
+
+    @Test
+    fun stream_start_event_with_image_content_lands_in_response_images() {
+        val acc = GeminiInteractionsStreamAccumulator()
+        // 流式下图片整块随 step.start 的完整载荷到达，不产生流式增量
+        feed(
+            acc,
+            "{'event_type':'step.start','index':0,'step':{'type':'model_output','content':[" +
+                "{'type':'text','text':'图来'},{'type':'image','mime_type':'image/png','data':'QUJD'}]}}",
+            "{'event_type':'step.stop','index':0}",
+            "{'event_type':'interaction.completed','interaction':{'status':'completed','steps':[]}}"
+        )
+        val response = acc.toResponse()
+        assertEquals("图来", response.content)
+        assertEquals(1, response.images.size)
+        assertEquals("image/png", response.images[0].mimeType)
+        assertEquals("QUJD", response.images[0].base64Data)
+    }
+
+    @Test
+    fun terminal_event_steps_with_images_are_the_fallback() {
+        val acc = GeminiInteractionsStreamAccumulator()
+        // step.start 未带图时，终止事件携带的 steps 兜底解析图片
+        feed(
+            acc,
+            "{'event_type':'interaction.completed','interaction':{'status':'completed','steps':" +
+                "[{'type':'model_output','content':[{'type':'image','mime_type':'image/jpeg','data':'MTIz'}]}]}}"
+        )
+        val response = acc.toResponse()
+        assertEquals(1, response.images.size)
+        assertEquals("image/jpeg", response.images[0].mimeType)
+        assertEquals("MTIz", response.images[0].base64Data)
+    }
 }

@@ -1207,6 +1207,7 @@ class AIAgentViewModel @Inject constructor(
                             reasoning = reasoning,
                             signature = event.signature.ifEmpty { null },
                             thinkingBlocksJson = event.thinkingBlocksJson.ifEmpty { null },
+                            attachments = event.attachments,
                             inputTokens = event.inputTokens,
                             outputTokens = event.outputTokens,
                             cachedInputTokens = event.cachedInputTokens

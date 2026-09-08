@@ -92,16 +92,23 @@ internal fun buildInteractionsInput(messages: List<AgentMessage>): List<Any> {
  * 裁掉（如用户拒绝执行），快照里的 signature 就对不上实际发出的调用序列，这时退回按正文重建。
  */
 private fun AgentMessage.AssistantMessage.toModelSteps(keptCalls: List<ToolCall>): List<Any> {
+    // 有图片的轮不走快照：快照会携大 base64（4K 图约 10MB）撑爆数据库行，且快照不含图片回放
+    // 就断了多轮编辑。宁可重建（此轮几乎不涉及工具，thought signature 丢失影响可控），
+    // 把图片 block 并入 model_output 完整回传。
     decodeInteractionSteps(thinkingBlocksJson)
-        ?.takeIf { keptCalls.size == toolCalls.size }
+        ?.takeIf { keptCalls.size == toolCalls.size && images.isEmpty() }
         ?.let { return it }
 
     val steps = mutableListOf<Any>()
-    if (content.isNotBlank()) {
+    val contentBlocks = buildList {
+        if (content.isNotBlank()) add(textContent(content))
+        images.forEach { add(it.toImageContent()) }
+    }
+    if (contentBlocks.isNotEmpty()) {
         steps.add(
             mapOf(
                 "type" to InteractionStep.MODEL_OUTPUT,
-                "content" to listOf(textContent(content))
+                "content" to contentBlocks
             )
         )
     }
@@ -127,16 +134,24 @@ private fun AgentMessage.UserMessage.toInteractionContent(): List<Map<String, An
     return blocks.ifEmpty { listOf(textContent(content)) }
 }
 
-/** 工具结果：Interactions 允许 `result` 里夹图片 content，故截图类工具结果能原样带回。 */
-private fun AgentMessage.ToolResultMessage.toInteractionResult(): List<Map<String, Any>> {
+/**
+ * 工具结果：以 `{"result": 文本}` 对象回传。
+ *
+ * 不回传工具产出的图片：生成图已展示给用户并落盘，再进上下文只会膨胀 token，
+ * 且部分中转网关把 interactions 转 generateContent 时无法处理数组型 result
+ * （会把 content 数组直接塞给 function_response.response 报 `cannot start list`）。
+ * 官方 Interactions 的 result 接受对象/字符串/Content 数组，对象最稳。
+ */
+private fun AgentMessage.ToolResultMessage.toInteractionResult(): Any {
     // 文件类工具喂模型用精简投影文本，UI/持久化仍走完整 result。
     val modelText = modelResult
         ?: modelToolResultText(toolName, result)
         ?: result
-    val blocks = mutableListOf<Map<String, Any>>()
-    if (modelText.isNotBlank()) blocks.add(textContent(modelText))
-    images.forEach { blocks.add(it.toImageContent()) }
-    return blocks.ifEmpty { listOf(textContent(modelText)) }
+    return if (modelText.isBlank()) {
+        listOf(textContent(modelText))
+    } else {
+        mapOf("result" to modelText)
+    }
 }
 
 /**

@@ -120,7 +120,7 @@ class GeminiInteractionsPayloadTest {
         assertEquals(InteractionStep.FUNCTION_RESULT, result[2].type())
         // 结果靠 call_id 与调用的 id 配对
         assertEquals("c1", result[2].get("call_id").asString)
-        assertEquals("内容", result[2].getAsJsonArray("result")[0].asJsonObject.get("text").asString)
+        assertEquals("内容", result[2].getAsJsonObject("result").get("result").asString)
     }
 
     @Test
@@ -272,7 +272,7 @@ class GeminiInteractionsPayloadTest {
     }
 
     @Test
-    fun tool_result_images_ride_along_in_result_blocks() {
+    fun tool_result_is_emitted_as_plain_result_object_without_images() {
         val result = steps(
             listOf(
                 AgentMessage.UserMessage(content = "截图"),
@@ -285,9 +285,72 @@ class GeminiInteractionsPayloadTest {
                 )
             )
         )
-        val blocks = result[2].getAsJsonArray("result")
-        assertEquals(2, blocks.size())
-        assertEquals("image", blocks[1].asJsonObject.get("type").asString)
-        assertEquals("BBB", blocks[1].asJsonObject.get("data").asString)
+        // result 以对象回传（兼容部分中转网关转 generateContent 时对数组型 result 的拒绝）；
+        // 工具产出的图片不回传——图已展示给用户，再进上下文只会膨胀 token。
+        val resultObj = result[2].getAsJsonObject("result")
+        assertEquals("已截图", resultObj.get("result").asString)
+        assertFalse(resultObj.has("images"))
+    }
+
+    @Test
+    fun assistant_generated_images_are_rebuilt_into_model_output_blocks() {
+        val result = steps(
+            listOf(
+                AgentMessage.UserMessage(content = "画一只猫"),
+                AgentMessage.AssistantMessage(
+                    content = "画好了",
+                    images = listOf(AgentImage(mimeType = "image/png", base64Data = "CCC"))
+                )
+            )
+        )
+        assertEquals(InteractionStep.MODEL_OUTPUT, result[1].type())
+        val content = result[1].getAsJsonArray("content")
+        assertEquals(2, content.size())
+        assertEquals("text", content[0].asJsonObject.get("type").asString)
+        assertEquals("image", content[1].asJsonObject.get("type").asString)
+        // Interactions 的 image block 平铺 mime_type / data（与 generateContent 的 inline_data 不同）
+        assertEquals("image/png", content[1].asJsonObject.get("mime_type").asString)
+        assertEquals("CCC", content[1].asJsonObject.get("data").asString)
+    }
+
+    @Test
+    fun assistant_image_turn_abandons_snapshot_to_keep_base64_out_of_db() {
+        // 图片快照若原样回放会携带大 base64（4K 图约 10MB）撑爆数据库行，
+        // 因此有图片的轮放弃快照、按正文+图片重建（签名丢失影响可控）。
+        val snapshot = """
+            [{'type':'thought','signature':'sig-1'}]
+        """.trimIndent().replace('\'', '"')
+        val result = steps(
+            listOf(
+                AgentMessage.UserMessage(content = "画一只猫"),
+                AgentMessage.AssistantMessage(
+                    content = "画好了",
+                    thinkingBlocksJson = snapshot,
+                    images = listOf(AgentImage(mimeType = "image/png", base64Data = "CCC"))
+                )
+            )
+        )
+        assertEquals(InteractionStep.MODEL_OUTPUT, result[1].type())
+        val content = result[1].getAsJsonArray("content")
+        assertEquals(2, content.size())
+        assertEquals("image", content[1].asJsonObject.get("type").asString)
+        assertEquals("CCC", content[1].asJsonObject.get("data").asString)
+    }
+
+    @Test
+    fun assistant_pure_image_turn_emits_model_output_with_image_only() {
+        val result = steps(
+            listOf(
+                AgentMessage.UserMessage(content = "画一只猫"),
+                AgentMessage.AssistantMessage(
+                    content = "",
+                    images = listOf(AgentImage(mimeType = "image/png", base64Data = "CCC"))
+                )
+            )
+        )
+        assertEquals(InteractionStep.MODEL_OUTPUT, result[1].type())
+        val content = result[1].getAsJsonArray("content")
+        assertEquals(1, content.size())
+        assertEquals("image", content[0].asJsonObject.get("type").asString)
     }
 }

@@ -23,7 +23,9 @@ sealed class AgentEvent {
         val outputTokens: Int = 0,
         val cachedInputTokens: Int = 0,
         /** Anthropic thinking / redacted_thinking 内容块的原样快照（JSON 数组文本），随 reasoning 落库供后续轮原样回传。 */
-        val thinkingBlocksJson: String = ""
+        val thinkingBlocksJson: String = "",
+        /** 模型直出图片（Gemini 图像模型）落盘后构造的文件卡片，随消息落库供 UI 渲染。 */
+        val attachments: List<com.aicode.feature.agent.presentation.AgentAttachment> = emptyList()
     ) : AgentEvent()
 
     /** 流式过程中模型逐字吐出的文字（[accumulated] 为本轮已累积的完整文本，用于 UI 实时渲染，不落库）。 */
