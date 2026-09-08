@@ -49,6 +49,7 @@ import compose.icons.FeatherIcons
 import compose.icons.feathericons.ArrowDown
 import compose.icons.feathericons.ArrowUp
 import compose.icons.feathericons.Check
+import compose.icons.feathericons.Camera
 import compose.icons.feathericons.Image
 import compose.icons.feathericons.Minimize2
 import compose.icons.feathericons.Type
@@ -65,6 +66,8 @@ internal fun DefaultModelsSection(
     compactionModel: String,
     titleProviderId: String,
     titleModel: String,
+    imageGenProviderId: String,
+    imageGenModel: String,
     modelMetadata: Map<String, ModelMetadata>,
     onLoadMetadata: () -> Unit,
     onSelectVisionModel: (providerId: String, model: String) -> Unit,
@@ -72,11 +75,14 @@ internal fun DefaultModelsSection(
     onSelectCompactionModel: (providerId: String, model: String) -> Unit,
     onClearCompactionModel: () -> Unit,
     onSelectTitleModel: (providerId: String, model: String) -> Unit,
-    onClearTitleModel: () -> Unit
+    onClearTitleModel: () -> Unit,
+    onSelectImageGenModel: (providerId: String, model: String) -> Unit,
+    onClearImageGenModel: () -> Unit
 ) {
     var showVisionSheet by remember { mutableStateOf(false) }
     var showCompactionSheet by remember { mutableStateOf(false) }
     var showTitleSheet by remember { mutableStateOf(false) }
+    var showImageGenSheet by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { onLoadMetadata() }
 
@@ -96,6 +102,12 @@ internal fun DefaultModelsSection(
         stringResource(R.string.settings_title_follow_chat)
     } else {
         titleModel
+    }
+
+    val imageGenValue = if (imageGenProviderId.isBlank() || imageGenModel.isBlank()) {
+        stringResource(R.string.settings_image_gen_unconfigured)
+    } else {
+        imageGenModel
     }
 
     Column(
@@ -148,6 +160,23 @@ internal fun DefaultModelsSection(
                 trailing = {
                     Text(
                         text = titleValue,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.End,
+                        modifier = Modifier.weight(2f)
+                    )
+                }
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = FeatherIcons.Camera,
+                title = stringResource(R.string.settings_image_gen_model),
+                onClick = { showImageGenSheet = true },
+                trailing = {
+                    Text(
+                        text = imageGenValue,
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -217,6 +246,26 @@ internal fun DefaultModelsSection(
                 showTitleSheet = false
             },
             onDismiss = { showTitleSheet = false }
+        )
+    }
+
+    if (showImageGenSheet) {
+        ModelSelectionSheet(
+            title = stringResource(R.string.settings_image_gen_model),
+            noModelsText = stringResource(R.string.image_gen_no_models),
+            providers = providers,
+            currentProviderId = imageGenProviderId,
+            currentModel = imageGenModel,
+            modelMetadata = modelMetadata,
+            onSelect = { pid, model ->
+                onSelectImageGenModel(pid, model)
+                showImageGenSheet = false
+            },
+            onClear = {
+                onClearImageGenModel()
+                showImageGenSheet = false
+            },
+            onDismiss = { showImageGenSheet = false }
         )
     }
 }

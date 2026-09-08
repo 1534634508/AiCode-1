@@ -11,6 +11,7 @@
     <string name="settings_vision_model">Vision Model</string>
     <string name="settings_compaction_model">Compaction Model</string>
     <string name="settings_title_model">Title Model</string>
+    <string name="settings_image_gen_model">Image Generation Model</string>
     <string name="settings_mcp">MCP Servers</string>
     <string name="settings_skills">Skills</string>
     <string name="settings_container">Container &amp; Images</string>
@@ -118,7 +119,8 @@
     <string name="settings_add_mcp_server">Add MCP server</string>
     <string name="settings_refresh_logs">Refresh logs</string>    <string name="settings_vision_follow_chat">Follow current chat model</string>
     <string name="settings_compaction_follow_chat">Follow current chat model</string>
-    <string name="settings_title_follow_chat">Follow current chat model</string>    <string name="settings_theme_title">Appearance</string>    <string name="theme_auto">Auto</string>
+    <string name="settings_title_follow_chat">Follow current chat model</string>
+    <string name="settings_image_gen_unconfigured">Not configured</string>    <string name="settings_theme_title">Appearance</string>    <string name="theme_auto">Auto</string>
     <string name="theme_dark">Dark</string>
     <string name="theme_light">Light</string>
     <string name="theme_mode_section">Appearance mode</string>
@@ -1162,6 +1164,9 @@
     <!-- Compaction Model -->
     <string name="compaction_no_models">No models available. Please add and configure a model in "AI Providers" before selecting a dedicated compaction model.</string>
     <string name="title_no_models">No models available. Please add and configure a model in "AI Providers" before selecting a dedicated title model.</string>
+
+    <!-- Image Generation Model -->
+    <string name="image_gen_no_models">No models available. Please add and configure a model in "AI Providers" (must support image output, e.g. gpt-image-1 / dall-e-3) before selecting an image generation model.</string>
 
     <!-- Web Search Result -->
     <string name="web_search_title">Web Search</string>

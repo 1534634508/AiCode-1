@@ -65,6 +65,7 @@ import com.aicode.feature.settings.data.repository.ProxySettingsRepository
 import com.aicode.feature.settings.data.repository.ScreenOnSettingsRepository
 import com.aicode.feature.settings.data.repository.ThemeSettingsRepository
 import com.aicode.feature.settings.data.repository.BackgroundSettingsRepository
+import com.aicode.feature.settings.data.repository.ImageGenModelSettingsRepository
 import com.aicode.feature.settings.data.repository.VisionModelSettingsRepository
 import com.aicode.feature.workspace.domain.model.RemoteConnection
 import com.aicode.feature.workspace.domain.repository.RemoteRepository
@@ -286,6 +287,7 @@ class SettingsViewModel @Inject constructor(
     private val toolRegistry: ToolRegistry,
     private val skillConfigRepository: SkillConfigRepository,
     private val visionModelSettingsRepository: VisionModelSettingsRepository,
+    private val imageGenModelSettingsRepository: ImageGenModelSettingsRepository,
     private val compactionModelSettingsRepository: CompactionModelSettingsRepository,
     private val titleModelSettingsRepository: TitleModelSettingsRepository,
     private val defaultModelSettingsRepository: DefaultModelSettingsRepository,
@@ -406,6 +408,13 @@ class SettingsViewModel @Inject constructor(
 
     private val _titleModel = MutableStateFlow("")
     val titleModel: StateFlow<String> = _titleModel.asStateFlow()
+
+    /** 生图专用模型选择：providerId 为空即未配置（生图不跟随聊天模型）。 */
+    private val _imageGenProviderId = MutableStateFlow("")
+    val imageGenProviderId: StateFlow<String> = _imageGenProviderId.asStateFlow()
+
+    private val _imageGenModel = MutableStateFlow("")
+    val imageGenModel: StateFlow<String> = _imageGenModel.asStateFlow()
 
     private val _logLevel = MutableStateFlow(LogLevel.VERBOSE)
     val logLevel: StateFlow<LogLevel> = _logLevel.asStateFlow()
@@ -648,6 +657,18 @@ class SettingsViewModel @Inject constructor(
             launch {
                 titleModelSettingsRepository.modelFlow.collectLatest {
                     _titleModel.value = it
+                }
+            }
+
+            launch {
+                imageGenModelSettingsRepository.providerIdFlow.collectLatest {
+                    _imageGenProviderId.value = it
+                }
+            }
+
+            launch {
+                imageGenModelSettingsRepository.modelFlow.collectLatest {
+                    _imageGenModel.value = it
                 }
             }
 
@@ -1535,6 +1556,20 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    /** 设置生图专用模型；providerId 留空等同 [clearImageGenModel]（未配置）。 */
+    fun setImageGenModel(providerId: String, model: String) {
+        viewModelScope.launch {
+            imageGenModelSettingsRepository.setImageGenModel(providerId, model)
+        }
+    }
+
+    /** 清空生图专用模型——回到未配置状态（生图工具将提示先配置）。 */
+    fun clearImageGenModel() {
+        viewModelScope.launch {
+            imageGenModelSettingsRepository.clear()
+        }
+    }
+
     fun setTokenStatsPeriod(period: TokenStatsPeriod) {
         _tokenStatsPeriod.value = period
         // 切周期后明细与统计切片回到第一页
@@ -1633,6 +1668,11 @@ class SettingsViewModel @Inject constructor(
             visionModelSettingsRepository.getVisionModel() in removed
         ) {
             visionModelSettingsRepository.clear()
+        }
+        if (imageGenModelSettingsRepository.getImageGenProviderId() == provider.id &&
+            imageGenModelSettingsRepository.getImageGenModel() in removed
+        ) {
+            imageGenModelSettingsRepository.clear()
         }
         if (compactionModelSettingsRepository.getCompactionProviderId() == provider.id &&
             compactionModelSettingsRepository.getCompactionModel() in removed

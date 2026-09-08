@@ -11,6 +11,7 @@
     <string name="settings_vision_model">识图模型</string>
     <string name="settings_compaction_model">压缩模型</string>
     <string name="settings_title_model">标题总结模型</string>
+    <string name="settings_image_gen_model">生图模型</string>
     <string name="settings_mcp">MCP 服务器</string>
     <string name="settings_skills">技能</string>
     <string name="settings_container">容器与镜像</string>
@@ -118,7 +119,8 @@
     <string name="settings_add_mcp_server">添加 MCP 服务器</string>
     <string name="settings_refresh_logs">刷新日志</string>    <string name="settings_vision_follow_chat">跟随当前聊天模型</string>
     <string name="settings_compaction_follow_chat">跟随当前聊天模型</string>
-    <string name="settings_title_follow_chat">跟随当前聊天模型</string>    <string name="settings_theme_title">外观主题</string>    <string name="theme_auto">自动</string>
+    <string name="settings_title_follow_chat">跟随当前聊天模型</string>
+    <string name="settings_image_gen_unconfigured">未配置</string>    <string name="settings_theme_title">外观主题</string>    <string name="theme_auto">自动</string>
     <string name="theme_dark">深色</string>
     <string name="theme_light">浅色</string>
     <string name="theme_mode_section">明暗模式</string>
@@ -1161,6 +1163,9 @@
     <!-- Compaction Model -->
     <string name="compaction_no_models">暂无可用模型。请在「AI 提供商」中添加并配置模型后再选压缩专用模型。</string>
     <string name="title_no_models">暂无可用模型。请在「AI 提供商」中添加并配置模型后再选标题总结专用模型。</string>
+
+    <!-- Image Generation Model -->
+    <string name="image_gen_no_models">暂无可用模型。请在「AI 提供商」中添加并配置模型后（需支持图像输出，如 gpt-image-1 / dall-e-3），再选生图模型。</string>
 
     <!-- Web Search Result -->
     <string name="web_search_title">网络搜索</string>
