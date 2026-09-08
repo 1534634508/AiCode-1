@@ -1,22 +1,10 @@
 package com.aicode.feature.agent.presentation.component
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.requiredWidth
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -24,7 +12,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.text.TextStyle
@@ -34,17 +21,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aicode.core.theme.semanticColors
-import com.mikepenz.markdown.compose.LocalMarkdownColors
-import com.mikepenz.markdown.compose.LocalMarkdownDimens
 import com.mikepenz.markdown.compose.Markdown
 import com.mikepenz.markdown.compose.LazyMarkdownSuccess
 import com.mikepenz.markdown.compose.MarkdownSuccess
 import com.mikepenz.markdown.compose.components.MarkdownComponents
 import com.mikepenz.markdown.compose.components.markdownComponents
-import com.mikepenz.markdown.compose.elements.LocalTableRowIndex
-import com.mikepenz.markdown.compose.elements.MarkdownDivider
 import com.mikepenz.markdown.compose.elements.MarkdownHighlightedCodeBlock
 import com.mikepenz.markdown.compose.elements.MarkdownHighlightedCodeFence
+import com.mikepenz.markdown.compose.elements.MarkdownTable
 import com.mikepenz.markdown.compose.elements.MarkdownTableHeader
 import com.mikepenz.markdown.compose.elements.MarkdownTableRow
 import com.mikepenz.markdown.m3.markdownColor
@@ -56,9 +40,6 @@ import com.mikepenz.markdown.model.rememberMarkdownState
 import com.mikepenz.markdown.model.State as MarkdownParseState
 import dev.snipme.highlights.Highlights
 import dev.snipme.highlights.model.SyntaxThemes
-import org.intellij.markdown.ast.ASTNode
-import org.intellij.markdown.flavours.gfm.GFMElementTypes
-import org.intellij.markdown.flavours.gfm.GFMTokenTypes
 
 internal class MarkdownRenderCache(
     private val maxEntries: Int = 80
@@ -234,15 +215,33 @@ internal fun MarkdownContent(
                         )
                     }
                 },
-                // 自定义 ScrollableMarkdownTable 保证横向滚动修饰符始终挂载，
-                // 解决原生库在 maxWidth > tableWidth（如少列表格）时直接走 fillMaxWidth 剥离 horizontalScroll 致超长内容无法滑动的 bug；
-                // 同时内部单元格长文支持完整多行展示。
+                // 库默认 maxLines=1 + Ellipsis，单元格长文会被截断；这里放开为完整多行显示。
                 table = {
                     DisableSelection {
-                        ScrollableMarkdownTable(
+                        MarkdownTable(
                             content = it.content,
                             node = it.node,
                             style = it.typography.table,
+                            headerBlock = { content, header, tableWidth, style ->
+                                MarkdownTableHeader(
+                                    content = content,
+                                    header = header,
+                                    tableWidth = tableWidth,
+                                    style = style,
+                                    maxLines = Int.MAX_VALUE,
+                                    overflow = TextOverflow.Clip,
+                                )
+                            },
+                            rowBlock = { content, header, tableWidth, style ->
+                                MarkdownTableRow(
+                                    content = content,
+                                    header = header,
+                                    tableWidth = tableWidth,
+                                    style = style,
+                                    maxLines = Int.MAX_VALUE,
+                                    overflow = TextOverflow.Clip,
+                                )
+                            },
                         )
                     }
                 },
@@ -269,70 +268,6 @@ internal fun MarkdownContent(
                 color = color,
                 modifier = modifier
             )
-        }
-    }
-}
-
-@Composable
-private fun ScrollableMarkdownTable(
-    content: String,
-    node: ASTNode,
-    style: TextStyle,
-) {
-    val dimens = LocalMarkdownDimens.current
-    val colors = LocalMarkdownColors.current
-    val headerNode = remember(node) {
-        node.children.firstOrNull { it.type == GFMElementTypes.HEADER }
-    }
-    val columnCount = remember(headerNode) {
-        headerNode?.children?.count { it.type == GFMTokenTypes.CELL } ?: 1
-    }
-    val minTableWidth = dimens.tableCellWidth * columnCount
-    val scrollState = rememberScrollState()
-    val shape = RoundedCornerShape(dimens.tableCornerSize)
-
-    BoxWithConstraints(
-        modifier = Modifier
-            .fillMaxWidth()
-            .widthIn(max = dimens.tableMaxWidth)
-            .padding(vertical = 4.dp)
-            .clip(shape)
-            .background(colors.tableBackground, shape)
-            .border(dimens.dividerThickness, colors.dividerColor, shape)
-            .horizontalScroll(scrollState)
-    ) {
-        val targetWidth = maxOf(maxWidth, minTableWidth)
-        Column(modifier = Modifier.requiredWidth(targetWidth)) {
-            var rowIndex = 1
-            node.children.forEach { child ->
-                when (child.type) {
-                    GFMElementTypes.HEADER -> {
-                        MarkdownTableHeader(
-                            content = content,
-                            header = child,
-                            tableWidth = targetWidth,
-                            style = style,
-                            maxLines = Int.MAX_VALUE,
-                            overflow = TextOverflow.Clip,
-                        )
-                    }
-                    GFMElementTypes.ROW -> {
-                        CompositionLocalProvider(LocalTableRowIndex provides rowIndex++) {
-                            MarkdownTableRow(
-                                content = content,
-                                header = child,
-                                tableWidth = targetWidth,
-                                style = style,
-                                maxLines = Int.MAX_VALUE,
-                                overflow = TextOverflow.Clip,
-                            )
-                        }
-                    }
-                    GFMTokenTypes.TABLE_SEPARATOR -> {
-                        MarkdownDivider()
-                    }
-                }
-            }
         }
     }
 }
