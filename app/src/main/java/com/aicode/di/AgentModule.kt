@@ -29,6 +29,7 @@ import com.aicode.feature.settings.data.repository.ExecutionMode
 import com.aicode.feature.settings.data.repository.ExecutionModeHolder
 import com.aicode.feature.agent.domain.tool.file.ReadFileTool
 import com.aicode.feature.agent.domain.tool.file.SendFileTool
+import com.aicode.feature.agent.domain.tool.file.GenerateImageTool
 import com.aicode.feature.agent.domain.tool.file.ViewImageTool
 import com.aicode.feature.agent.domain.tool.file.WriteFileTool
 import com.aicode.feature.agent.domain.tool.editor.EditFileTool
@@ -251,6 +252,7 @@ object AgentModule {
         viewImageTool: ViewImageTool,
         writeFileTool: WriteFileTool,
         editFileTool: EditFileTool,
+        generateImageTool: GenerateImageTool,
         executeCommandTool: ExecuteCommandTool,
         terminalSessionTool: TerminalSessionTool,
         listFilesTool: ListFilesTool,
@@ -271,6 +273,7 @@ object AgentModule {
             register("viewImage", viewImageTool)
             register("writeFile", writeFileTool)
             register("editFile", editFileTool)
+            register("generateImage", generateImageTool)
             register("Bash", executeCommandTool)
             register("terminal", terminalSessionTool)
             register("list", listFilesTool)

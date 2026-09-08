@@ -750,7 +750,7 @@ class StatefulAgentWorkflow @Inject constructor(
         }
         return try {
             val result = tool.executeWithContext(toolCall.arguments, context)
-            val attachments = if (name == "sendFile") extractAttachments(result) else emptyList()
+            val attachments = if (name == "sendFile" || name == "generateImage") extractAttachments(result) else emptyList()
             val images = if (result is ToolResult.Success) result.images else emptyList()
             val transportResult = if (attachments.isNotEmpty()) stripAttachments(result) else result
             val processed = toolOutputStore.process(name, toolCall.id, transportResult)

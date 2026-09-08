@@ -79,3 +79,53 @@ data class Usage(
 data class PromptTokensDetails(
     val cached_tokens: Int? = null
 )
+
+/**
+ * Images API（POST /images/generations）请求体。Gson 按字段名直序列化，
+ * 字段名必须保持 snake_case 与 OpenAI 接口一致。
+ *
+ * 各参数按模型兼容性由调用方决定是否携带（GPT image 系不支持 [responseFormat]
+ * 且总是返回 b64_json；[background]/[moderation]/[outputFormat] 仅 GPT image 系有效；
+ * [style] 仅 dall-e-3 有效）；null 时 Gson 跳过该字段。
+ */
+data class ImageGenerationRequest(
+    val model: String,
+    val prompt: String,
+    val n: Int? = null,
+    val size: String? = null,
+    val quality: String? = null,
+    val response_format: String? = null,
+    val output_format: String? = null,
+    val background: String? = null,
+    val moderation: String? = null,
+    val style: String? = null
+)
+
+/** Images API 单张生成结果。 */
+data class ImageGenerationResult(
+    val b64_json: String? = null,
+    val url: String? = null,
+    val revised_prompt: String? = null
+)
+
+/** Images API token 用量（gpt-image 系返回，dall-e 系无此字段）。 */
+data class ImageGenerationUsage(
+    val input_tokens: Int = 0,
+    val output_tokens: Int = 0,
+    val total_tokens: Int = 0,
+    val input_tokens_details: ImageTokenDetails? = null,
+    val output_tokens_details: ImageTokenDetails? = null
+)
+
+/** Images API token 明细：图片 token 与文本 token 拆分。 */
+data class ImageTokenDetails(
+    val image_tokens: Int = 0,
+    val text_tokens: Int = 0
+)
+
+/** Images API 响应体（Gson 反序列化，仅取用所需字段）。 */
+data class ImageGenerationResponse(
+    val created: Long = 0,
+    val data: List<ImageGenerationResult> = emptyList(),
+    val usage: ImageGenerationUsage? = null
+)

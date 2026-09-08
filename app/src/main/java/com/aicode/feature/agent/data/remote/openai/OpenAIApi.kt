@@ -42,4 +42,13 @@ interface OpenAIApi {
         @HeaderMap extraHeaders: Map<String, String> = emptyMap(),
         @Body request: Any
     ): ResponseBody
+
+    /** Images API：生成图片（POST /v1/images/generations）。 */
+    @POST
+    suspend fun createImage(
+        @Url url: String,
+        @retrofit2.http.Header("Authorization") authorization: String,
+        @HeaderMap extraHeaders: Map<String, String> = emptyMap(),
+        @Body request: ImageGenerationRequest
+    ): ImageGenerationResponse
 }
